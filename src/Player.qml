@@ -52,7 +52,7 @@ FocusScope {
 
         VideoOutput {
             id: videoOutput
-
+            fillMode: VideoOutput.Stretch
             source: qmlAvPlayer
             anchors.fill: parent
         }
