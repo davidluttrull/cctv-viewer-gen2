@@ -466,6 +466,22 @@ FocusScope {
                                     onEditingFinished: Utils.currentModel().get(currentViewportIndex).url = text
                                 }
 
+                                TextField {
+                                    text: enabled ? Utils.currentModel().get(currentViewportIndex).urlHigh : ""
+                                    placeholderText: qsTr("Url (maximized)")
+                                    selectByMouse: true
+                                    hoverEnabled: true
+
+                                    Layout.fillWidth: true
+
+                                    onEditingFinished: Utils.currentModel().get(currentViewportIndex).urlHigh = text
+
+                                    ToolTip.delay: Compact.toolTipDelay
+                                    ToolTip.timeout: Compact.toolTipTimeout
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: qsTr("Higher-quality stream used while this viewport is maximized. Leave empty to always use the stream above.")
+                                }
+
                                 Button {
                                     text: qsTr("Mute")
                                     enabled: currentViewportIndex >= 0 ? Utils.currentLayout().get(currentViewportIndex).hasAudio : false

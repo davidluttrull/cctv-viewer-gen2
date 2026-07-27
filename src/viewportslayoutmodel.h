@@ -22,6 +22,9 @@ public:
     Q_ENUM(Visible)
 
     QMLAV_PROPERTY(QString, url, setUrl, urlChanged);
+    // Optional higher-quality stream, used while the viewport is maximized.
+    // When empty, "url" is used at all times.
+    QMLAV_PROPERTY(QString, urlHigh, setUrlHigh, urlHighChanged);
     QMLAV_PROPERTY(int, rowSpan, setRowSpan, rowSpanChanged) = 1;
     QMLAV_PROPERTY(int, columnSpan, setColumnSpan, columnSpanChanged) = 1;
     QMLAV_PROPERTY(ViewportsLayoutItem::Visible, visible, setVisible, visibleChanged) = Visible::Visible;

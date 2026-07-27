@@ -190,11 +190,18 @@ FocusScope {
                     property real zoomScale: 1.0
                     property real panX: 0
                     property real panY: 0
-                    readonly property bool zoomEnabled: fullScreen || (root.size.width === 1 && root.size.height === 1)
+                    // True when this viewport fills the whole layout, either because it was
+                    // maximized or because the layout is a single cell.
+                    readonly property bool maximized: fullScreen || (root.size.width === 1 && root.size.height === 1)
+                    readonly property bool zoomEnabled: maximized
 
                     readonly property alias selected: d2.selected
 
                     readonly property alias url: d2.url
+                    readonly property alias urlHigh: d2.urlHigh
+                    // Stream handed to the player: the high-quality one while maximized (when
+                    // configured), the normal one otherwise.
+                    readonly property url activeUrl: (maximized && String(d2.urlHigh) !== "") ? d2.urlHigh : d2.url
                     readonly property alias column: d2.column
                     readonly property alias row: d2.row
                     readonly property alias columnSpan: d2.columnSpan
@@ -372,6 +379,7 @@ FocusScope {
                         property bool selected: d.selectionContains(model.index)
 
                         property url url: model.url
+                        property url urlHigh: model.urlHigh
                         property int column: d.columnFromIndex(model.index)
                         property int row: d.rowFromIndex(model.index)
                         property int columnSpan: model.columnSpan
@@ -430,7 +438,7 @@ FocusScope {
                             id: player
 
                             color: root.color
-                            source: viewport.url
+                            source: viewport.activeUrl
                             volume: Math.max(viewport.volume, root.fullScreenIndex === index && viewportSettings.unmuteWhenFullScreen)
                             avOptions: viewport.avFormatOptions
                             loops: MediaPlayer.Infinite
@@ -602,6 +610,7 @@ FocusScope {
             for (var i = 0; i < root.size.width * root.size.height; ++i) {
                 if (root.get(i).selected) {
                     model.get(i).url = "";
+                    model.get(i).urlHigh = "";
                     model.get(i).volume = 0;
                     model.get(i).avFormatOptions = layoutsCollectionSettings.toJSValue("defaultAVFormatOptions");
                 }
