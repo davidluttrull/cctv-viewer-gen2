@@ -520,14 +520,8 @@ FocusScope {
                         onMouseXChanged: mouseMoveHandler()
                         onMouseYChanged: mouseMoveHandler()
                         
-                        // Handle mousewheel zoom when in fullscreen (requires CTRL modifier)
+                        // Handle mousewheel zoom when in fullscreen
                         onWheel: {
-                            if (wheel.modifiers & Qt.ControlModifier) {
-                                if (!viewport.fullScreen && root.size.width > 1 && root.size.height > 1) {
-                                    viewport.fullScreen = true;
-                                    viewport.forceActiveFocus();
-                                    d.selectionReset();
-                                }
 
                                 if (viewport.zoomEnabled) {
                                     var delta = wheel.angleDelta.y / 120;
@@ -559,7 +553,6 @@ FocusScope {
                                 }
 
                                 wheel.accepted = true;
-                            }
                         }
 
                         function mouseMoveHandler() {
