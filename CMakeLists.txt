@@ -79,11 +79,8 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT ANDROID)
         -Wcast-qual
         # -Wconversion
         -Wctor-dtor-privacy
-        -Wduplicated-branches
-        -Wduplicated-cond
         -Wextra-semi
         -Wfloat-equal
-        -Wlogical-op
         -Wnon-virtual-dtor
         -Wold-style-cast
         # -Woverloaded-virtual
@@ -91,6 +88,16 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND NOT ANDROID)
         # -Wsign-conversion
         # -Wsign-promo
     )
+
+    # GCC-only diagnostics. Apple clang treats these as unknown warning
+    # options, which -Werror above then promotes to a hard error.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        add_compile_options(
+            -Wduplicated-branches
+            -Wduplicated-cond
+            -Wlogical-op
+        )
+    endif()
 endif()
 
 # Disable use of C++ API deprecated in Qt 5.15
@@ -168,13 +175,23 @@ set(QML_IMPORT_PATH "${CMAKE_SOURCE_DIR}/src/imports" CACHE STRING "Additional i
 
 add_subdirectory(src/qmlav)
 
+# qmlav appends VA-API/GLX/X11 libraries for any UNIX target, but CMake also
+# reports UNIX on macOS, where none of them exist. The code that uses them
+# (qmlavhwoutput.cpp) is already guarded by #if defined(__linux__), so dropping
+# the libraries here is enough. Consequence: no hardware decoding on macOS --
+# every stream is decoded on the CPU until a VideoToolbox output is written.
+if(APPLE)
+    list(REMOVE_ITEM QMLAV_LINK_DEPENDENCIES va va-x11 GL GLX X11)
+endif()
+
 if (ANDROID)
     add_library(cctv-viewer SHARED ${PROJ_FILES} ${QMLAV_FILES})
 
     target_include_directories(cctv-viewer PRIVATE "${CMAKE_SOURCE_DIR}/src/qmlav/3rd/FFmpeg/ffbuild/${ANDROID_ABI}/include")
     target_link_directories(cctv-viewer PRIVATE "${CMAKE_SOURCE_DIR}/src/qmlav/3rd/FFmpeg/ffbuild/${ANDROID_ABI}/lib")
 else()
-    add_executable(cctv-viewer ${PROJ_FILES} ${QMLAV_FILES})
+    # MACOSX_BUNDLE is ignored on non-Apple platforms.
+    add_executable(cctv-viewer MACOSX_BUNDLE ${PROJ_FILES} ${QMLAV_FILES})
 endif()
 
 target_include_directories(cctv-viewer PRIVATE ${QMLAV_INCLUDE})
@@ -195,7 +212,21 @@ else()
     qt5_create_translation(QM_FILES ${CMAKE_SOURCE_DIR} ${TS_FILES})
 endif()
 
-if (UNIX AND NOT ANDROID)
+if (APPLE)
+    set_target_properties(cctv-viewer PROPERTIES
+        MACOSX_BUNDLE_BUNDLE_NAME "${APP_NAME}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${VER_MAJ}.${VER_MIN}.${VER_PAT}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${VER_MAJ}.${VER_MIN}"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "org.cctv-viewer.cctv-viewer"
+        MACOSX_BUNDLE_COPYRIGHT "GPL-3.0"
+    )
+
+    # The .desktop file and pixmap below are Linux-only, and /usr is not a
+    # writable install prefix on macOS. Bundle Qt, the QML modules and the
+    # FFmpeg dylibs into the .app instead:
+    #   macdeployqt cctv-viewer.app -qmldir=${CMAKE_SOURCE_DIR}
+    install(TARGETS cctv-viewer BUNDLE DESTINATION ".")
+elseif (UNIX AND NOT ANDROID)
     include(GNUInstallDirs)
     set(CMAKE_INSTALL_PREFIX "/usr")
     install(TARGETS cctv-viewer DESTINATION "${CMAKE_INSTALL_BINDIR}")
