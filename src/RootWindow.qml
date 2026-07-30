@@ -75,10 +75,20 @@ ApplicationWindow {
         // TODO: Move to "View"
         property bool presetIndicator: true
         // TODO: Move to "Viewport"
-        property string defaultAVFormatOptions: JSON.stringify({
-            "analyzeduration": 0, // 0 µs
-            "probesize": 500000   // 500 KB
-        })
+        property string defaultAVFormatOptions: {
+            var options = {
+                "analyzeduration": 0, // 0 µs
+                "probesize": 500000   // 500 KB
+            };
+
+            // Hand H.264/HEVC decoding to the VideoToolbox media engine instead of
+            // the CPU. Qt 5 reports "osx" here, Qt 6 reports "macos".
+            if (Qt.platform.os === "osx" || Qt.platform.os === "macos") {
+                options["hwaccel"] = "videotoolbox";
+            }
+
+            return JSON.stringify(options);
+        }
 
         function toJSValue(key) {
             var obj = {};
