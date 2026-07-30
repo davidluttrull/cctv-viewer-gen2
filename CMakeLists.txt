@@ -141,6 +141,11 @@ else()
         libavdevice
     )
     include_directories(${LIBAV_INCLUDE_DIRS})
+
+    # qmlav passes bare library names (avformat, avcodec, ...), so the linker needs
+    # to be told where pkg-config found them. On Linux they live in a default search
+    # path and this is a no-op; under Homebrew they do not.
+    link_directories(${LIBAV_LIBRARY_DIRS})
 endif()
 
 find_package(QT NAMES Qt6 Qt5 COMPONENTS ${QT_LINK_DEPENDENCIES} QuickCompiler LinguistTools REQUIRED)
