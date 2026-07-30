@@ -226,6 +226,19 @@ if (APPLE)
         MACOSX_BUNDLE_COPYRIGHT "GPL-3.0"
     )
 
+    # Dock, Finder and Cmd-Tab icon. The .icns itself is a binary build artifact
+    # and is not committed -- generate it with "sh macos/make-icns.sh".
+    set(MACOSX_BUNDLE_ICNS "${CMAKE_SOURCE_DIR}/macos/cctv-viewer.icns")
+    if (EXISTS "${MACOSX_BUNDLE_ICNS}")
+        target_sources(cctv-viewer PRIVATE "${MACOSX_BUNDLE_ICNS}")
+        set_source_files_properties("${MACOSX_BUNDLE_ICNS}" PROPERTIES
+            MACOSX_PACKAGE_LOCATION "Resources")
+        set_target_properties(cctv-viewer PROPERTIES
+            MACOSX_BUNDLE_ICON_FILE "cctv-viewer.icns")
+    else()
+        message(STATUS "macos/cctv-viewer.icns not found, bundle will use the generic icon. Generate it with: sh macos/make-icns.sh")
+    endif()
+
     # The .desktop file and pixmap below are Linux-only, and /usr is not a
     # writable install prefix on macOS. Bundle Qt, the QML modules and the
     # FFmpeg dylibs into the .app instead:
