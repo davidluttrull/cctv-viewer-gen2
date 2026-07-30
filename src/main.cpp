@@ -3,6 +3,10 @@
 #include <QQuickWindow>
 #include <QTranslator>
 
+#if defined(Q_OS_MACOS)
+#include <QFontDatabase>
+#endif
+
 #include "qmlavplayer.h"
 #include "context.h"
 #include "eventfilter.h"
@@ -41,6 +45,13 @@ int main(int argc, char *argv[])
 {
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
 
+#if defined(Q_OS_MACOS)
+    // Load the macOS variant of the Quick Controls configuration, which omits the
+    // fixed 10pt font so that controls inherit the system UI font set below.
+    // Must happen before the Quick Controls plugin is loaded.
+    qputenv("QT_QUICK_CONTROLS_CONF", ":/qtquickcontrols2-macos.conf");
+#endif
+
 #if defined(APP_NAME)
     QCoreApplication::setApplicationName(QLatin1String(APP_NAME));
 #endif
@@ -59,6 +70,13 @@ int main(int argc, char *argv[])
     registerQmlTypes();
 
     QGuiApplication app(argc, argv);
+
+#if defined(Q_OS_MACOS)
+    // Use the platform UI font (San Francisco at the system size) rather than
+    // the fixed point size the Compact style specifies for other platforms.
+    QGuiApplication::setFont(QFontDatabase::systemFont(QFontDatabase::GeneralFont));
+#endif
+
     QQmlApplicationEngine engine;
     QTranslator translator;
     const QString locale = QLocale::system().name();
