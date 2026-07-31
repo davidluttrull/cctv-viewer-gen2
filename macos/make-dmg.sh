@@ -7,6 +7,7 @@
 #
 #     cmake --build build -j"$(sysctl -n hw.ncpu)"
 #     "$(brew --prefix qt@5)/bin/macdeployqt" build/cctv-viewer.app -qmldir=.
+#     sh macos/fixup-bundle.sh
 #     codesign --force --deep --sign - build/cctv-viewer.app
 #     sh macos/make-dmg.sh
 #
@@ -52,6 +53,14 @@ if [ ! -d "$APP/Contents/Frameworks/QtCore.framework" ]; then
     echo "Run: \"\$(brew --prefix qt@5)/bin/macdeployqt\" $APP -qmldir=." >&2
     exit 1
 fi
+
+# Refuse to ship a bundle that still depends on anything outside itself. The
+# signature check above passes happily on a bundle whose FFmpeg libraries name
+# the build machine's Homebrew paths -- it launches here and dies on dyld
+# anywhere else, which is exactly how v0.1.9 through v0.1.11 shipped broken.
+# --verify-only because the bundle is signed by this point and must not be
+# modified; the fix belongs before the codesign step.
+sh "$(dirname "$0")/fixup-bundle.sh" --verify-only "$APP"
 
 VERSION="$1"
 if [ -z "$VERSION" ]; then

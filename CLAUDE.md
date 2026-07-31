@@ -16,13 +16,21 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$(brew --prefix qt@5)"
 cmake --build build -j"$(sysctl -n hw.ncpu)"
 "$(brew --prefix qt@5)/bin/macdeployqt" build/cctv-viewer.app -qmldir=.
+sh macos/fixup-bundle.sh
 codesign --force --deep --sign - build/cctv-viewer.app
 ```
 
-All four steps, every time. Skipping the last two after a rebuild loads two
+All five steps, every time. Skipping the last three after a rebuild loads two
 copies of Qt and the cocoa plugin fails — see `BUILD-macos.md` §6. Always
 `Release`; `Debug` turns on `-Werror` with a warning set never tried against
 clang.
+
+`macos/fixup-bundle.sh` finishes the job `macdeployqt` leaves half-done: it
+repoints FFmpeg's references to its own libraries into the bundle, adds the
+SVG image plugin, and then fails if anything in the bundle still resolves to a
+path outside it. Both omissions are invisible on the build machine and fatal on
+the user's — details in `BUILD-macos.md` §6. It must run before `codesign`,
+because it rewrites load commands and so invalidates the signature.
 
 `sh macos/make-icns.sh` regenerates the Dock icon (needed once per clone, and
 after editing `macos/appicon.svg`; CMake only picks it up at configure time).

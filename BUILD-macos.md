@@ -96,10 +96,11 @@ translations and the QML cache. Both are pre-existing and cosmetic.
 This runs against Homebrew's Qt via absolute paths. You should get the window
 and the sidebar. Any QML module resolution errors show up on stderr here.
 
-## 6. Bundle, then re-sign — in that order
+## 6. Bundle, fix up, then re-sign — in that order
 
 ```sh
 "$(brew --prefix qt@5)/bin/macdeployqt" build/cctv-viewer.app -qmldir=.
+sh macos/fixup-bundle.sh
 codesign --force --deep --sign - build/cctv-viewer.app
 codesign --verify --deep --strict --verbose=2 build/cctv-viewer.app
 ./build/cctv-viewer.app/Contents/MacOS/cctv-viewer
@@ -132,7 +133,48 @@ Class QMacAutoReleasePoolTracker is implemented in both .../Cellar/qt@5/...
 qt.qpa.plugin: Could not load the Qt platform plugin "cocoa" ... even though it was found.
 ```
 
-Treat `cmake --build` → `macdeployqt` → `codesign` as one indivisible sequence.
+Treat `cmake --build` → `macdeployqt` → `fixup-bundle.sh` → `codesign` as one
+indivisible sequence.
+
+### What `macos/fixup-bundle.sh` is for
+
+`macdeployqt` gets the bundle most of the way there and stops, in two ways that
+both look fine on the machine that built it and break on the user's:
+
+1. It copies the non-Qt dependencies into `Contents/Frameworks` and repoints
+   the *app's* references to them, but not the references those libraries make
+   to *each other*. FFmpeg's libraries depend on each other heavily, so
+   `libavformat`, `libavcodec`, `libavfilter`, `libavdevice`, `libswscale` and
+   `libswresample` keep naming the absolute build path
+   `/opt/homebrew/Cellar/ffmpeg/<version>/lib/...`. Here dyld resolves it
+   because Homebrew's FFmpeg really is at that path; on a Mac without Homebrew
+   it does not exist and the app is killed before it draws a window — it
+   bounces once in the Dock and disappears.
+
+2. It does not deploy `imageformats/libqsvg.dylib` on a clean build. That is
+   the `QImageReader` plugin, and it is a different plugin from the `QIcon`
+   engine in `iconengines/libqsvgicon.dylib`, which *is* deployed. Every icon
+   in the app is an `.svg` out of the `.qrc`, so without it they all fail to
+   decode and the sidebar and preset bar come up blank:
+
+   ```
+   QML Image: Error decoding: qrc:/images/play.svg: Unsupported image format
+   ```
+
+   Note this one hides on an incremental build: once a bundle has the plugin it
+   keeps it across later `macdeployqt` runs, so the bug only appears after
+   `rm -rf build`. That is why it reached users while local rebuilds looked
+   fine.
+
+Both shipped in v0.1.9 through v0.1.11. The script repairs them, and then
+checks that nothing in the bundle still resolves to a path outside it —
+walking every Mach-O rather than the six FFmpeg libraries by name, so the next
+vendored dependency is covered without anyone remembering this. `make-dmg.sh`
+runs the same check with `--verify-only` and refuses to package a bundle that
+fails it.
+
+Note the script must run *before* `codesign`: it rewrites Mach-O load commands,
+which invalidates the signature exactly as `macdeployqt` does.
 
 `-qmldir=.` lets `macdeployqt` scan the QML files to find which Qt Quick
 modules are imported at runtime. Without it the app opens to a blank window.
