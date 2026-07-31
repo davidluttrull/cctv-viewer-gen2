@@ -347,12 +347,37 @@ the cause just above:
 ```
 
 Bursts of consecutive losses like that are usually the **host** dropping
-packets, not the network: FFmpeg's default UDP receive buffer is 384 KB
-(`UDP_RX_BUF_SIZE`), which a single 4K I-frame approaches on its own, so a reader
-thread that falls milliseconds behind loses a burst. `defaultAVFormatOptions`
-therefore sets `buffer_size` to 2 MB. macOS allows up to `kern.ipc.maxsockbuf`
-(8 MB by default) per socket, and FFmpeg warns if it gets less than it asked for.
-A larger buffer costs no latency — it only stops the kernel discarding data.
+packets, not the network, and two separate buffers can cause it. Both are sized
+up in `defaultAVFormatOptions`:
+
+- `buffer_size` → 2 MB, against FFmpeg's 384 KB default (`UDP_RX_BUF_SIZE`). A
+  single 4K I-frame approaches that on its own, so a reader thread that falls
+  milliseconds behind loses a burst. macOS allows up to `kern.ipc.maxsockbuf`
+  (8 MB by default) per socket, and FFmpeg warns if it gets less than it asked
+  for.
+- `reorder_queue_size` → 2000, against FFmpeg's 500 packets
+  (`RTP_REORDER_QUEUE_DEFAULT_SIZE`). This one is worth knowing about because it
+  *masquerades* as loss: when the queue fills, `rtpdec.c` gives up and returns
+  what it has "even if we're missing something", logging `jitter buffer full` and
+  reporting the gap as missed packets. A burst of out-of-order delivery is then
+  indistinguishable from real loss in the log.
+
+Neither costs latency. They only stop data being discarded; how long the demuxer
+waits for a missing packet is still `max_delay`.
+
+Measured on a 27-stream session, same cameras, one run each before and after:
+
+| | default buffers | sized up |
+|---|---|---|
+| `RTP: missed` events | 4 | 0 |
+| packets lost | 559 | 0 |
+| `max delay reached` | 3 | 0 |
+| `jitter buffer full` | 1 | 0 |
+| frames concealed | 1 | 0 |
+
+One run each, and loss is bursty, so treat that as indicative rather than
+conclusive. What remained afterwards was the benign startup burst — one
+`vt decoder cb` and one `Unable send packet` per stream, exactly one-to-one.
 
 Raising `max_delay` would also reduce loss, and is the wrong trade here: it is
 how long the demuxer waits for a missing packet, defaulting to 100 ms

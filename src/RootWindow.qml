@@ -79,14 +79,25 @@ ApplicationWindow {
             var options = {
                 "analyzeduration": 0, // 0 µs
                 "probesize": 500000,  // 500 KB
+                // Both of these reduce packet loss without costing latency, which
+                // rules out the usual alternatives: rtsp_transport tcp and a larger
+                // max_delay each buy reliability with delay on screen, and this is a
+                // realtime viewer. A larger buffer or queue only stops data being
+                // discarded - how long the demuxer waits for a missing packet is
+                // still max_delay, 100 ms by default, and untouched.
+                //
                 // UDP receive buffer, against FFmpeg's 384 KB default
                 // (UDP_RX_BUF_SIZE). A single I-frame from a 4K camera approaches
                 // that on its own, so a reader thread that falls a few milliseconds
                 // behind loses a burst of packets - which is what corrupts a
-                // reference frame and leaves the decoder rejecting everything after
-                // it. Costs no latency: a larger buffer only stops the kernel
-                // discarding data, it does not hold anything back.
-                "buffer_size": 2097152 // 2 MB
+                // reference frame and leaves the decoder rejecting everything after.
+                "buffer_size": 2097152,     // 2 MB
+                // RTP reorder queue, against FFmpeg's 500 packets
+                // (RTP_REORDER_QUEUE_DEFAULT_SIZE). When it fills, rtpdec.c gives up
+                // and returns what it has "even if we're missing something", logging
+                // "jitter buffer full" and reporting the gap as lost packets - so a
+                // burst of out-of-order delivery is indistinguishable from real loss.
+                "reorder_queue_size": 2000
             };
 
             // Hand H.264/HEVC decoding to the VideoToolbox media engine instead of
