@@ -18,25 +18,35 @@ git checkout macos-build
 cloned without `--recurse-submodules`, run
 `git submodule update --init --recursive`.
 
-## 2. Put the submodule on the videotoolbox branch
+## 2. Check the submodule commit
 
-`.gitmodules` points at our fork, but the recorded commit is still upstream's,
-so the VideoToolbox output module has to be checked out explicitly:
+`.gitmodules` points at our fork and the recorded commit is now the right one —
+the tip of `videotoolbox-bgra`, which carries the VideoToolbox output module and
+the two fixes that make it display video. A plain init is enough:
 
 ```sh
 git submodule sync
 git submodule update --init --recursive
-
-cd src/qmlav
-git fetch origin videotoolbox
-git checkout videotoolbox
-cd ../..
-
-git add src/qmlav
-git commit -m "Point qmlav at the videotoolbox branch"
+git submodule status src/qmlav
 ```
 
-Confirm with `git submodule status`.
+A leading `-` means uninitialized, `+` means the checkout does not match the
+recorded commit. Neither should appear. No manual branch checkout is needed;
+earlier revisions of this document told you to check out `videotoolbox` by hand,
+which is now wrong — that branch predates the fixes and renders black viewports.
+
+Note the submodule lands detached at the recorded commit rather than on a
+branch. To commit changes to qmlav you have to `git checkout videotoolbox-bgra`
+inside it first, then advance the gitlink by hand:
+
+```sh
+cd src/qmlav && git checkout videotoolbox-bgra && cd ../..
+git add src/qmlav && git commit -m "Point qmlav at ..."
+```
+
+**Push the submodule before the superproject.** A gitlink referencing a commit
+that only exists locally leaves everyone else with
+`fatal: reference is not a tree`.
 
 ## 3. Dependencies
 
@@ -111,6 +121,19 @@ The `-` identity means ad-hoc: no Developer ID, valid on this machine only.
 `--deep` covers the Qt frameworks and plugins `macdeployqt` copied in, which
 were rewritten as well. Re-run `codesign` after every `macdeployqt` run.
 
+**Both steps must be repeated after every rebuild, not just the first deploy.**
+Relinking replaces the executable with one that references Homebrew's Qt again,
+while the bundle still carries the frameworks `macdeployqt` copied in. Two copies
+of Qt then load into one process and the platform plugin fails:
+
+```
+Class QMacAutoReleasePoolTracker is implemented in both .../Cellar/qt@5/...
+  and .../cctv-viewer.app/Contents/Frameworks/QtCore.framework/...
+qt.qpa.plugin: Could not load the Qt platform plugin "cocoa" ... even though it was found.
+```
+
+Treat `cmake --build` → `macdeployqt` → `codesign` as one indivisible sequence.
+
 `-qmldir=.` lets `macdeployqt` scan the QML files to find which Qt Quick
 modules are imported at runtime. Without it the app opens to a blank window.
 
@@ -134,44 +157,93 @@ can be copied to `/Applications` as-is. It keeps working as long as `qt@5` and
 
 ## 8. Hardware decoding
 
-Settings → Viewport → "Default FFmpeg options":
+Nothing to configure. On macOS the default FFmpeg options are:
 
 ```
--hwaccel videotoolbox
+-hwaccel videotoolbox -hwaccel_output cvgl
 ```
 
-No rebuild required. `QmlAVOptions::avHWDeviceType()` passes the value straight
-to `av_hwdevice_find_type_by_name()`, and when no output module matches,
-`QmlAVVideoBuffer_GPU::map()` falls back to `av_hwframe_transfer_data()` to
-bring frames into system memory. VideoToolbox's `sw_format` is NV12, which
-qmlav already treats as Qt-native, so no swscale conversion runs — the CPU does
-one plane copy per frame instead of decoding H.264/HEVC.
+`hwaccel` hands H.264/HEVC to the VideoToolbox media engine instead of the CPU.
+`hwaccel_output cvgl` then keeps the decoded frames on the GPU: the
+`CVPixelBuffer` is wrapped as an OpenGL texture through `CVOpenGLTextureCache`
+and handed to Qt directly.
 
-Compare CPU usage in Activity Monitor with a full grid before and after.
+Without `cvgl`, decoding is still offloaded but every frame is dragged back
+through system memory by `av_hwframe_transfer_data()` in
+`QmlAVVideoBuffer_GPU::map()` — on Qt's render thread, serialized across all
+viewports. That serialization, not the copy bandwidth, is what limits how many
+viewports stay smooth.
 
-Adding `-hwaccel_output cvgl` selects the zero-copy CoreVideo module, but see
-below before expecting it to work.
+### Measured
+
+32 streams across two 4×4 windows (two processes), 12 × 704×480 plus 4 × 1280×720,
+sustained 90 seconds on a Mac13,2:
+
+| | per process |
+|---|---|
+| CPU | ~33% of one core (median) |
+| RSS | 236–245 MB, flat |
+| viewports on the zero-copy path | 16/16 |
+
+That is roughly 3% of a 20-core machine for all 32 streams, with no memory
+growth across ~86,000 frames. Maximizing a 4K stream stays responsive.
+
+### Overriding it
+
+`defaultAVFormatOptions` in `src/RootWindow.qml` is a `Settings` **default**, so
+it only applies where nothing has been persisted yet. An existing install keeps
+whatever is already in its config file. Check Settings → Viewport → "Default
+FFmpeg options", and note per-viewport options override the global default.
+
+To compare against the CPU path, clear `hwaccel` there and restart.
 
 On first connection macOS prompts for Local Network access. Deny it and the
 cameras never connect, with viewports sitting at "Loading..." and no obvious
 cause. System Settings → Privacy & Security → Local Network.
 
-## Known gaps in the cvgl module
+## cvgl caveats
 
-**The decoder still requests NV12.** `CVOpenGLTextureCache` produces one
-texture per plane, so the module rejects non-BGRA buffers rather than rendering
-them incorrectly. Requesting BGRA means allocating `hw_frames_ctx` explicitly
-in `initVideoDecoder()` with `sw_format` set to BGRA, via
-`avcodec_get_hw_frames_parameters()`.
+**BGRA requires full colour range, and getting it wrong kills decoding.**
+VideoToolbox exposes each pixel format under one specific colour range, and
+libavcodec resolves `sw_format` using `avctx->color_range`. FFmpeg 8.1.2
+registers BGRA as full-range only, so a stream declaring limited or unspecified
+range fails the lookup — and it is fatal rather than a fallback:
 
-**Texture target mismatch.** `CVOpenGLTextureCache` returns
-`GL_TEXTURE_RECTANGLE_ARB` on macOS while Qt's video node shaders sample
-`GL_TEXTURE_2D`, so the texture will not display until that is reconciled with
-an FBO blit. `CVOpenGLTextureGetTarget()` reports the actual target.
+```
+Failed to map underlying FFmpeg pixel format bgra (unknown range) to a VideoToolbox format!
+Failed setup for format videotoolbox_vld: hwaccel initialisation returned error.
+```
 
-The CoreVideo/OpenGL bridge is also deprecated as of macOS 10.14 in favour of
-Metal, which produces four compiler warnings. It still functions under Qt 5,
-but a Qt 6 port would need this rewritten against Metal and QRhi.
+`QmlAVVideoDecoder::requestBGRAHWFrames()` handles this by probing both ranges
+with `av_map_videotoolbox_format_from_pixfmt2()` and aligning `color_range` only
+once BGRA frames are certain. Two traps worth knowing if this ever regresses:
+
+- `av_hwframe_ctx_init()` **succeeds** with a BGRA `sw_format` that libavcodec
+  will later reject, so the `Requested BGRA HW frames` log line does not prove
+  the format was accepted.
+- Whether a camera trips this is camera-dependent. Of 16 tested, 12 already
+  declared full range and 4 did not — so a partial rollout can look like it
+  works fine.
+
+**Expect three one-off errors per stream at startup**, before the first
+keyframe. They recover and do not recur:
+
+```
+[h264] hardware accelerator failed to decode picture
+[h264] vt decoder cb: output image buffer is null: -12909, reconfig 1
+[QmlAVDecoder] Unable send packet to decoder: "Unknown error occurred"
+```
+
+**The CoreVideo/OpenGL bridge is deprecated** as of macOS 10.14 in favour of
+Metal, producing six compiler warnings. It still functions under Qt 5.
+
+**Do not try to "fix" that with Metal under Qt 5.** Qt 5.15 does ship an RHI
+path with a Metal backend, but `QtMultimediaQuick` — where the video nodes live
+— has no `QRhi`, no `.qsb` and no `QShader`; its shaders are raw GLSL 1.x.
+Enabling Metal breaks video output rather than accelerating it. Metal is a Qt 6
+conversation, and worth checking first whether Qt 6's FFmpeg multimedia backend
+handles VideoToolbox frames natively, since much of this module may then be
+deletable rather than portable.
 
 **Window behaviour.** `src/eventfilter.cpp` and the fullscreen handling in
 `RootWindow.qml` were written against X11 window management. Test fullscreen
