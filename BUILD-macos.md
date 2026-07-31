@@ -137,8 +137,8 @@ Treat `cmake --build` → `macdeployqt` → `codesign` as one indivisible sequen
 `-qmldir=.` lets `macdeployqt` scan the QML files to find which Qt Quick
 modules are imported at runtime. Without it the app opens to a blank window.
 
-Distributing to another Mac requires a real Developer ID signature plus
-notarization; ad-hoc signatures are rejected by Gatekeeper elsewhere.
+An ad-hoc signature is enough to *run* the app anywhere, but not enough to get
+it past Gatekeeper on a Mac that downloaded it — see section 8.
 
 ## 7. Install
 
@@ -155,7 +155,95 @@ If bundling is more trouble than it's worth, the un-deployed bundle from step 5
 can be copied to `/Applications` as-is. It keeps working as long as `qt@5` and
 `ffmpeg` remain installed through Homebrew — fine for one machine, not portable.
 
-## 8. Hardware decoding
+### The Dock icon
+
+```sh
+brew install librsvg
+sh macos/make-icns.sh
+cmake -S . -B build ...   # reconfigure; CMake only picks it up at configure time
+```
+
+`macos/make-icns.sh` rasterizes `macos/appicon.svg` into
+`macos/cctv-viewer.icns`. The `.icns` is a binary artifact and is not committed,
+so a fresh clone builds with the generic icon until this is run — CMake prints a
+status line saying so rather than failing.
+
+The source is macOS-specific and drawn on Apple's icon grid (an 824×824 rounded
+square centred in a 1024 canvas). `images/cctv-viewer.svg` remains the Linux and
+Windows icon and is unchanged.
+
+`rsvg-convert` is required and there is deliberately no fallback. `qlmanage` can
+also rasterize SVG, but it composites onto opaque white instead of preserving
+alpha, which bakes a white square around the rounded corners — obvious in the
+Dock, and invisible in the script's output.
+
+## 8. Publishing a disk image
+
+```sh
+sh macos/make-dmg.sh            # after build → macdeployqt → codesign
+```
+
+Writes `build/CCTV-Viewer-<version>-<arch>.dmg` plus
+`build/release-notes.md`. The image holds the app, a symlink to `/Applications`
+to drag it onto, and a read-me.
+
+The script refuses to run on a bundle whose signature does not verify, or one
+with no Qt frameworks copied in. Both mistakes produce an image that installs
+cleanly and then fails on the user's machine — the first with a SIGKILL, the
+second with missing-library errors — so they are worth catching here.
+
+It also does not go through `install()` or CPack. Both rewrite Mach-O load
+commands as they stage files, which invalidates the signature applied in step 6,
+which is exactly the failure that step warns about. `ditto` copies the bundle
+byte for byte instead.
+
+### Gatekeeper, and what users actually see
+
+An ad-hoc signature is valid but anonymous. A disk image downloaded from GitHub
+carries a quarantine flag, and for an app that is not notarized, macOS 15 and
+later refuse to open it — the Control-click → Open shortcut that used to bypass
+this was removed. The real first-launch sequence is:
+
+1. Double-click; macOS says it "cannot be opened because Apple cannot check it
+   for malicious software".
+2. System Settings → Privacy & Security → scroll to Security → **Open Anyway**.
+
+Or `xattr -dr com.apple.quarantine /Applications/cctv-viewer.app`. Once per
+machine either way. `make-dmg.sh` reads the signature off the bundle and writes
+the read-me and release notes to match, so those instructions cannot drift out
+of sync with what was actually shipped.
+
+### CI
+
+`.github/workflows/macos-release.yml` runs the whole sequence on GitHub's macOS
+runner. Pushing a tag publishes a release with the image attached; running it
+manually from the Actions tab produces the image as a workflow artifact without
+publishing.
+
+The runners are Apple silicon, so the result is **arm64 only**. Intel Macs would
+need a second job on `macos-13` and a second image.
+
+### Switching to a Developer ID
+
+Notarizing removes the first-launch warning entirely. The workflow already
+branches on whether the credentials exist, so it is only a matter of adding these
+repository secrets — no workflow edits:
+
+| Secret | What it is |
+|---|---|
+| `MACOS_CERTIFICATE` | Developer ID Application certificate, exported as `.p12`, then `base64` |
+| `MACOS_CERT_PASSWORD` | the password set when exporting that `.p12` |
+| `APPLE_ID` | Apple ID of the developer account |
+| `APPLE_TEAM_ID` | the 10-character team ID |
+| `APPLE_APP_PASSWORD` | an app-specific password, from appleid.apple.com |
+
+**That path has never been run.** It is written from Apple's documented steps —
+sign inside-out with the hardened runtime, submit with `notarytool`, staple the
+ticket — but with no account to test against, treat the first tag build after
+adding the secrets as the real test, and check the workflow log rather than
+assuming.
+
+## 9. Hardware decoding
 
 Nothing to configure. On macOS the default FFmpeg options are:
 

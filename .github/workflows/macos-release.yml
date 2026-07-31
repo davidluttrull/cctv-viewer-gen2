@@ -1,0 +1,195 @@
+# Builds the macOS disk image and attaches it to a GitHub release.
+#
+# Push a tag to publish:
+#
+#     git tag v0.1.9 && git push origin v0.1.9
+#
+# Or run it from the Actions tab (workflow_dispatch) to get a DMG as a workflow
+# artifact without publishing anything.
+#
+# Signing: ad-hoc by default, which is free but means macOS blocks the app on
+# first launch until the user allows it in System Settings (the disk image ships
+# a read-me explaining that). Adding the five MACOS_*/APPLE_* secrets below
+# switches this workflow over to a Developer ID signature plus notarization, and
+# the first-launch warning disappears. That path is written but has never been
+# run - see BUILD-macos.md.
+
+name: macOS release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    # GitHub's macOS runners are Apple silicon, so this builds arm64 only.
+    # Intel Macs would need a second job on macos-13 and a second DMG.
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # src/qmlav only, deliberately not recursive: qmlav's own nested
+          # FFmpeg submodule is a 90MB checkout that only the Android build
+          # uses, and cloning it here would dominate the run time.
+          submodules: true
+
+      - name: Install dependencies
+        run: |
+          # Homebrew deprecated qt@5 in May 2026 because Qt 5 is end-of-life. It
+          # still installs and only prints a warning. If Homebrew ever disables
+          # the formula outright, this step is what breaks first, and the fix is
+          # a Qt 6 port rather than anything in this file.
+          brew install cmake pkgconf ffmpeg qt@5 librsvg
+
+      - name: Generate the bundle icon
+        run: sh macos/make-icns.sh
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix qt@5)"
+
+      - name: Build
+        run: cmake --build build -j"$(sysctl -n hw.ncpu)"
+
+      - name: Bundle Qt and FFmpeg into the app
+        # -qmldir=. lets macdeployqt scan the QML for which Qt Quick modules are
+        # imported at runtime. Without it the app opens to a blank window.
+        run: '"$(brew --prefix qt@5)/bin/macdeployqt" build/cctv-viewer.app -qmldir=.'
+
+      - name: Check for a Developer ID certificate
+        id: creds
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+        # Secrets cannot be read directly in an `if:` expression, so the choice
+        # of signing path is resolved once here and read as a step output.
+        run: |
+          if [ -n "$MACOS_CERTIFICATE" ]; then
+            echo "have_cert=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_cert=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sign ad-hoc
+        if: steps.creds.outputs.have_cert == 'false'
+        # Re-signing after macdeployqt is mandatory on Apple silicon, not
+        # optional. macdeployqt rewrites Mach-O load commands to point at the
+        # bundle's own Frameworks directory, and rewriting those bytes
+        # invalidates the signature the linker applied - which is a SIGKILL
+        # during dynamic linking, before any of the app's code runs.
+        run: |
+          codesign --force --deep --sign - build/cctv-viewer.app
+          codesign --verify --deep --strict --verbose=2 build/cctv-viewer.app
+
+      - name: Sign with Developer ID
+        if: steps.creds.outputs.have_cert == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)"
+          if [ -z "$IDENTITY" ]; then
+            echo "No Developer ID Application identity in MACOS_CERTIFICATE." >&2
+            exit 1
+          fi
+
+          # Signed inside-out rather than with --deep: notarization rejects
+          # bundles whose nested code was signed by the outer --deep pass.
+          # --options runtime enables the hardened runtime, also required.
+          find build/cctv-viewer.app/Contents -type f \
+            \( -name "*.dylib" -o -name "*.so" \) -print0 \
+            | xargs -0 -n1 codesign --force --timestamp --options runtime --sign "$IDENTITY"
+          find build/cctv-viewer.app/Contents/Frameworks -maxdepth 1 -name "*.framework" -print0 \
+            | xargs -0 -n1 codesign --force --timestamp --options runtime --sign "$IDENTITY"
+          codesign --force --timestamp --options runtime --sign "$IDENTITY" build/cctv-viewer.app
+
+          codesign --verify --deep --strict --verbose=2 build/cctv-viewer.app
+
+      - name: Notarize the app
+        if: steps.creds.outputs.have_cert == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent build/cctv-viewer.app "$RUNNER_TEMP/app.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/app.zip" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+          # Staples the ticket into the bundle so it validates offline.
+          xcrun stapler staple build/cctv-viewer.app
+
+      - name: Build the disk image
+        # make-dmg.sh inspects the signature on the bundle and writes a read-me
+        # matching it, so the first-launch instructions never contradict what
+        # the user actually gets.
+        run: |
+          VERSION=""
+          case "$GITHUB_REF" in
+              refs/tags/v*) VERSION="${GITHUB_REF_NAME#v}" ;;
+          esac
+          sh macos/make-dmg.sh $VERSION
+
+      - name: Notarize the disk image
+        if: steps.creds.outputs.have_cert == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        # The app inside is already notarized; this covers the disk image
+        # itself, so the download does not trip Gatekeeper either.
+        run: |
+          DMG="$(ls build/*.dmg | head -1)"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+          xcrun stapler staple "$DMG"
+
+      - name: Upload the disk image as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cctv-viewer-dmg
+          path: build/*.dmg
+          if-no-files-found: error
+
+      - name: Attach the disk image to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # build/release-notes.md is written by make-dmg.sh, so the release body
+        # and the read-me inside the image always say the same thing.
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+              gh release upload "$GITHUB_REF_NAME" build/*.dmg --clobber
+          else
+              gh release create "$GITHUB_REF_NAME" build/*.dmg \
+                --title "CCTV Viewer $GITHUB_REF_NAME" \
+                --notes-file build/release-notes.md
+          fi
