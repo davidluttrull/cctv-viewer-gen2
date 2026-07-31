@@ -216,12 +216,24 @@ of sync with what was actually shipped.
 ### CI
 
 `.github/workflows/macos-release.yml` runs the whole sequence on GitHub's macOS
-runner. Pushing a tag publishes a release with the image attached; running it
-manually from the Actions tab produces the image as a workflow artifact without
-publishing.
+runner in about two and a half minutes. Pushing a tag publishes a release with
+the image attached.
 
 The runners are Apple silicon, so the result is **arm64 only**. Intel Macs would
 need a second job on `macos-13` and a second image.
+
+The workflow also declares `workflow_dispatch`, but that will not appear in the
+Actions tab or work from `gh workflow run` until the file exists on the
+repository's **default branch**. It currently lives only on `macos-build`, and
+GitHub registers manual triggers from the default branch alone:
+
+```
+HTTP 404: workflow macos-release.yml not found on the default branch
+```
+
+Tag pushes are unaffected — those are evaluated against the workflow file in the
+tag's own commit, so releasing works regardless. To get the manual trigger,
+the workflow file has to be merged to `master`.
 
 ### Switching to a Developer ID
 

@@ -20,10 +20,6 @@ on:
   push:
     tags:
       - "v*"
-    # TEMPORARY: one validation run of this workflow before any tag exists.
-    # Removed in the next commit.
-    branches:
-      - macos-build
   workflow_dispatch:
 
 permissions:
