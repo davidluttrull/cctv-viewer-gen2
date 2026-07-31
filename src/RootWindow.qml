@@ -85,6 +85,11 @@ ApplicationWindow {
             // the CPU. Qt 5 reports "osx" here, Qt 6 reports "macos".
             if (Qt.platform.os === "osx" || Qt.platform.os === "macos") {
                 options["hwaccel"] = "videotoolbox";
+                // Keep decoded frames on the GPU. Without an output module,
+                // QmlAVVideoBuffer_GPU::map() drags every frame back through
+                // system memory with av_hwframe_transfer_data(), on the render
+                // thread and serialized across all viewports.
+                options["hwaccel_output"] = "cvgl";
             }
 
             return JSON.stringify(options);
