@@ -334,6 +334,39 @@ keyframe. They recover and do not recur:
 [QmlAVDecoder] Unable send packet to decoder: "Unknown error occurred"
 ```
 
+**The same three lines repeating indefinitely are a different problem.** That is
+packet loss, not startup. `-12909` is `kVTVideoDecoderBadDataErr` and
+`-1313558101` is `AVERROR_UNKNOWN`; together they mean a reference frame arrived
+corrupted and the decoder is rejecting everything that depends on it. Look for
+the cause just above:
+
+```
+[rtsp] max delay reached. need to consume packet
+[rtsp] RTP: missed 127 packets
+[h264] concealing 9106 DC, 9106 AC, 9106 MV errors in I frame
+```
+
+Bursts of consecutive losses like that are usually the **host** dropping
+packets, not the network: FFmpeg's default UDP receive buffer is 384 KB
+(`UDP_RX_BUF_SIZE`), which a single 4K I-frame approaches on its own, so a reader
+thread that falls milliseconds behind loses a burst. `defaultAVFormatOptions`
+therefore sets `buffer_size` to 2 MB. macOS allows up to `kern.ipc.maxsockbuf`
+(8 MB by default) per socket, and FFmpeg warns if it gets less than it asked for.
+A larger buffer costs no latency — it only stops the kernel discarding data.
+
+Raising `max_delay` would also reduce loss, and is the wrong trade here: it is
+how long the demuxer waits for a missing packet, defaulting to 100 ms
+(`DEFAULT_REORDERING_DELAY`), and every millisecond added is latency on screen.
+The same goes for `rtsp_transport tcp`, which trades realtime behaviour for
+retransmits. Both are deliberately left alone.
+
+Two things now limit the damage when loss does happen. The decoder flushes and
+resynchronizes on the next keyframe after three consecutive failures rather than
+feeding itself packets whose reference is gone, and the warning is throttled to
+one line per five seconds. Separately, a viewport that stops receiving frames
+shows a small amber dot in its top-right corner and reconnects that one stream
+every six seconds until frames resume.
+
 **The CoreVideo/OpenGL bridge is deprecated** as of macOS 10.14 in favour of
 Metal, producing six compiler warnings. It still functions under Qt 5.
 

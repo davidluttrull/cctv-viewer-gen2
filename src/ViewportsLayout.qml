@@ -220,6 +220,9 @@ FocusScope {
 
                     readonly property bool hasAudio: xfade.showHigh ? (xfade.highPlayer !== null && xfade.highPlayer.hasAudio)
                                                                    : player.hasAudio
+                    // Whether the stream actually on screen has stopped delivering frames.
+                    readonly property bool stalled: xfade.showHigh ? (xfade.highPlayer !== null && xfade.highPlayer.stalled)
+                                                                   : player.stalled
 
                     states: [
                         State {
@@ -288,6 +291,15 @@ FocusScope {
                         }
                     }
                     onMaximizedChanged: maximizedSettleTimer.restart()
+                    onStalledChanged: {
+                        // Deliberately no URL in the message: the configuration holds camera
+                        // credentials in plaintext, and logs get pasted into bug reports.
+                        if (stalled) {
+                            Utils.log_info("Viewport " + model.index + ": frames stopped, reconnecting");
+                        } else {
+                            Utils.log_info("Viewport " + model.index + ": frames resumed");
+                        }
+                    }
                     Component.onCompleted: {
                         // Seed the settled state instead of waiting for the timer, so a layout
                         // that starts out maximized (a 1x1 preset) begins loading its
@@ -668,6 +680,16 @@ FocusScope {
                                     anchors.fill: parent
 
                                     onFirstFrameShownChanged: xfade.update()
+                                    onStalledChanged: {
+                                        // Drop back to the base stream while this one
+                                        // reconnects, rather than showing the black frame of
+                                        // a player with nothing to present. It fades back in
+                                        // through update() once frames return.
+                                        if (stalled) {
+                                            xfade.baseAlive = true;
+                                            xfade.showHigh = false;
+                                        }
+                                    }
                                 }
 
                                 Behavior on opacity {
@@ -687,6 +709,25 @@ FocusScope {
                             anchors.left: parent.left
                             anchors.bottom: parent.bottom
                             anchors.margins: 8
+                        }
+
+                        // A frozen viewport is indistinguishable from a live view of a still
+                        // scene, so a stalled stream needs some marker. Deliberately a small
+                        // steady dot rather than text or anything animated: this sits on a
+                        // wall someone watches for hours, and the stream reconnects itself
+                        // anyway, so it is a status light and not an alarm.
+                        Rectangle {
+                            id: stallIndicator
+
+                            width: 7
+                            height: 7
+                            radius: width / 2
+                            color: "#ffb02e"
+                            opacity: 0.8
+                            visible: viewport.stalled
+                            anchors.top: parent.top
+                            anchors.right: parent.right
+                            anchors.margins: 6
                         }
                     }
 

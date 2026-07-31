@@ -78,7 +78,15 @@ ApplicationWindow {
         property string defaultAVFormatOptions: {
             var options = {
                 "analyzeduration": 0, // 0 µs
-                "probesize": 500000   // 500 KB
+                "probesize": 500000,  // 500 KB
+                // UDP receive buffer, against FFmpeg's 384 KB default
+                // (UDP_RX_BUF_SIZE). A single I-frame from a 4K camera approaches
+                // that on its own, so a reader thread that falls a few milliseconds
+                // behind loses a burst of packets - which is what corrupts a
+                // reference frame and leaves the decoder rejecting everything after
+                // it. Costs no latency: a larger buffer only stops the kernel
+                // discarding data, it does not hold anything back.
+                "buffer_size": 2097152 // 2 MB
             };
 
             // Hand H.264/HEVC decoding to the VideoToolbox media engine instead of

@@ -96,6 +96,25 @@ exercises the maximized path at startup with no clicking. `--config` takes any
 path, and the layout lives in the `models` key as JSON — hand-writing one is
 much less work than driving the GUI.
 
+A local stream gives control over the failure modes that matter, with no camera
+and nothing to look at:
+
+```sh
+ffmpeg -re -f lavfi -i "testsrc=size=640x480:rate=15" -c:v libx264 \
+  -preset ultrafast -tune zerolatency -g 15 \
+  -f mpegts "udp://127.0.0.1:9999?pkt_size=1316"
+```
+
+- **Stall:** `kill -STOP` the sender. Note `pgrep -f` matches the shell wrapper
+  around a backgrounded command, not `ffmpeg` — stopping the wrapper leaves the
+  child streaming. Use `pgrep -x ffmpeg`. Allow for the receive buffer draining
+  first: 2 MB holds seconds of a low-bitrate stream.
+- **Corrupted references:** add `-bsf:v noise=amount=1500`. Lower amounts corrupt
+  every keyframe too, so nothing can ever decode and recovery cannot be observed.
+- `udp://` binds a fixed local port, so a reconnect can hit `Address already in
+  use` before the old socket is released. Real cameras use ephemeral client ports
+  and do not.
+
 ## Things that are settled — do not re-litigate
 
 - **`GL_TEXTURE_RECTANGLE_ARB` needs no FBO blit.** Qt 5 supports it via
@@ -114,6 +133,20 @@ much less work than driving the GUI.
   cross-fades and stops the one behind — so the steady state is still one stream
   per viewport, and both directions are seamless. Collapsing this back to a
   single player is the obvious "simplification" and reintroduces the stall.
+
+- **UDP is a deliberate choice, and the mitigations follow from it.** Lowest
+  latency matters more here than losing the occasional frame, so anything that
+  buys reliability with delay — `rtsp_transport tcp`, a larger `max_delay`,
+  bigger reorder queues — is off the table. Reducing loss without adding latency
+  (the 2 MB `buffer_size`) and recovering from it quickly (decoder resync, stall
+  reconnect) is the approach. Details in `BUILD-macos.md`.
+
+- **Reconnect a stalled stream only once it has shown a frame.** A stream that
+  has never delivered one is usually just slow to connect, and is already covered
+  by `demuxer_timeout` plus `QmlAVPlayer`'s retry on a terminal status;
+  reconnecting it interrupts the connection it was in the middle of making. This
+  was observed, not theorized: the demo streams take over 15s to start, and an
+  unconditional reconnect made them fail to open before they came up.
 
 - **Wait on `Player.firstFrameShown`, never `MediaPlayer.Buffered`.** The status
   reaches `Buffered` while the video surface is still empty, so a fade triggered

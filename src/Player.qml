@@ -25,10 +25,67 @@ FocusScope {
     // still empty, so fading a player in on that signal fades in black.
     readonly property alias firstFrameShown: d.firstFrameShown
 
+    // Frames were arriving and then stopped, while nothing reported an error. A
+    // stream can wedge without the pipeline noticing: over UDP, lost packets can
+    // corrupt a reference frame so the decoder rejects everything that follows,
+    // while packets keep arriving normally, so neither the demuxer timeout nor the
+    // player status ever changes. Only the absence of frames gives it away.
+    readonly property alias stalled: d.stalled
+
     QtObject {
         id: d
 
         property bool firstFrameShown: false
+        property bool stalled: false
+
+        function frameArrived() {
+            if (!firstFrameShown) {
+                firstFrameShown = true;
+            }
+
+            stalled = false;
+            // Only armed once frames have been seen, so this reports a stream that
+            // died rather than one that has not started. A stream that never starts
+            // is already covered by the status message.
+            stallTimer.restart();
+        }
+
+        function reset() {
+            firstFrameShown = false;
+            stalled = false;
+            stallTimer.stop();
+        }
+    }
+
+    Timer {
+        id: stallTimer
+
+        // Far more generous before the first frame than after it. A stream that has
+        // never delivered anything is usually just slow to connect, and 16 viewports
+        // all flagging themselves for the first few seconds of every launch is the
+        // fastest way to make the indicator worth ignoring. Once frames have been
+        // seen, stopping is a real fault and worth reporting quickly.
+        interval: d.firstFrameShown ? 4000 : 15000
+
+        onTriggered: d.stalled = true
+    }
+
+    Timer {
+        id: stallRecoveryTimer
+
+        // Reconnects a stalled stream, and keeps trying while it stays stalled. The
+        // interval is per attempt, so a genuinely dead camera retries at this rate
+        // rather than hammering.
+        interval: 6000
+        repeat: true
+        // Deliberately only for a stream that was working and stopped. That case has
+        // nothing else watching it. A stream that has never delivered a frame is
+        // already covered - demuxer_timeout gives up after 30s and QmlAVPlayer retries
+        // on a terminal status - and reconnecting one that is merely slow to start
+        // interrupts the connection it was in the middle of making.
+        running: d.stalled && d.firstFrameShown && root.visible
+
+        onTriggered: root.reconnect()
     }
 
     onVisibleChanged: {
@@ -40,7 +97,7 @@ FocusScope {
             timer.stop();
             qmlAvPlayer.autoPlay = false;
             qmlAvPlayer.stop();
-            d.firstFrameShown = false;
+            d.reset();
         }
     }
     Component.onCompleted: {
@@ -57,6 +114,14 @@ FocusScope {
         onTriggered: {
             if (root.visible) {
                 qmlAvPlayer.autoPlay = true;
+
+                // Start watching for frames now rather than waiting for the first one,
+                // so a stream that connects and then never decodes anything is still
+                // reported. Skipped for an unconfigured viewport, which is empty on
+                // purpose and says so through the status message.
+                if (String(qmlAvPlayer.source) !== "") {
+                    stallTimer.restart();
+                }
             }
         }
     }
@@ -103,12 +168,8 @@ FocusScope {
                 return avOptions;
             }
 
-            onSourceChanged: d.firstFrameShown = false
-            onVideoFramePresented: {
-                if (!d.firstFrameShown) {
-                    d.firstFrameShown = true;
-                }
-            }
+            onSourceChanged: d.reset()
+            onVideoFramePresented: d.frameArrived()
 
             onStatusChanged: {
                 switch (status) {
@@ -143,6 +204,14 @@ FocusScope {
                 message.text = qsTr("Buffering %1\%").arg(Math.round(bufferProgress * 100));
             }
         }
+    }
+
+    // Tears the connection down and builds it again. QmlAVPlayer only reconnects by
+    // itself when the demuxer reports a terminal status, which a stalled-but-still-
+    // receiving stream never does.
+    function reconnect() {
+        qmlAvPlayer.stop();
+        qmlAvPlayer.play();
     }
 
     function play() { qmlAvPlayer.play(); }
