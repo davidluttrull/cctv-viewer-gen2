@@ -24,6 +24,11 @@ copies of Qt and the cocoa plugin fails — see `BUILD-macos.md` §6. Always
 `Release`; `Debug` turns on `-Werror` with a warning set never tried against
 clang.
 
+`sh macos/make-icns.sh` regenerates the Dock icon (needed once per clone, and
+after editing `macos/appicon.svg`; CMake only picks it up at configure time).
+`sh macos/make-dmg.sh` packages a release image, and must run after the
+`codesign` step above, not before.
+
 Logs only reach stderr, so launch from a terminal, never Finder:
 
 ```sh
@@ -69,6 +74,21 @@ Useful signal: the CoreVideo module logs its texture target once per instance,
 so counting those lines equals the number of viewports that reached the
 zero-copy path. 16 lines in a 4×4 grid means all of them.
 
+Counting live connections answers questions about which streams are *running*
+without needing the screen at all:
+
+```sh
+lsof -nP -a -p "$(pgrep -x cctv-viewer)" -i TCP | grep -c ESTABLISHED
+```
+
+That is how the stream cross-fade below was verified: two decoders start, and
+one connection remains once the handoff has completed.
+
+A 1×1 layout is maximized by definition, so a config with a single viewport
+exercises the maximized path at startup with no clicking. `--config` takes any
+path, and the layout lives in the `models` key as JSON — hand-writing one is
+much less work than driving the GUI.
+
 ## Things that are settled — do not re-litigate
 
 - **`GL_TEXTURE_RECTANGLE_ARB` needs no FBO blit.** Qt 5 supports it via
@@ -79,6 +99,20 @@ zero-copy path. 16 lines in a 4×4 grid means all of them.
   Details in `BUILD-macos.md`.
 - **BGRA needs full colour range**, and the misleading part is that
   `av_hwframe_ctx_init()` succeeds anyway. Details in `BUILD-macos.md`.
+
+- **Stream quality switching uses two overlapping players, not one player
+  changing `source`.** Changing `source` tears down the RTSP connection and
+  rebuilds it, which is seconds of "Loading...". `ViewportsLayout.qml` keeps the
+  outgoing stream rendering until the incoming one has presented a frame, then
+  cross-fades and stops the one behind — so the steady state is still one stream
+  per viewport, and both directions are seamless. Collapsing this back to a
+  single player is the obvious "simplification" and reintroduces the stall.
+
+- **Wait on `Player.firstFrameShown`, never `MediaPlayer.Buffered`.** The status
+  reaches `Buffered` while the video surface is still empty, so a fade triggered
+  on it fades in black — which looks exactly like the bug it was meant to fix.
+  `firstFrameShown` is driven by qmlav's `videoFramePresented`, emitted after
+  `present()` succeeds.
 
 ## Known-unmeasured
 

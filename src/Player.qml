@@ -15,6 +15,21 @@ FocusScope {
     property alias muted: qmlAvPlayer.muted
     property alias volume: qmlAvPlayer.volume
     readonly property alias hasAudio: qmlAvPlayer.hasAudio
+    readonly property alias status: qmlAvPlayer.status
+
+    // True once this player has put a frame on screen, and false again whenever it
+    // has nothing to show (new source, or stopped because it went invisible).
+    //
+    // Anything cross-fading two players has to wait on this rather than on
+    // MediaPlayer.Buffered: the status reaches Buffered while the video surface is
+    // still empty, so fading a player in on that signal fades in black.
+    readonly property alias firstFrameShown: d.firstFrameShown
+
+    QtObject {
+        id: d
+
+        property bool firstFrameShown: false
+    }
 
     onVisibleChanged: {
         if (visible) {
@@ -25,6 +40,7 @@ FocusScope {
             timer.stop();
             qmlAvPlayer.autoPlay = false;
             qmlAvPlayer.stop();
+            d.firstFrameShown = false;
         }
     }
     Component.onCompleted: {
@@ -85,6 +101,13 @@ FocusScope {
                 Object.assignDefault(avOptions, layoutsCollectionSettings.toJSValue("defaultAVFormatOptions"));
 
                 return avOptions;
+            }
+
+            onSourceChanged: d.firstFrameShown = false
+            onVideoFramePresented: {
+                if (!d.firstFrameShown) {
+                    d.firstFrameShown = true;
+                }
             }
 
             onStatusChanged: {

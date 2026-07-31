@@ -199,9 +199,11 @@ FocusScope {
 
                     readonly property alias url: d2.url
                     readonly property alias urlHigh: d2.urlHigh
-                    // Stream handed to the player: the high-quality one while maximized (when
-                    // configured), the normal one otherwise.
-                    readonly property url activeUrl: (maximized && String(d2.urlHigh) !== "") ? d2.urlHigh : d2.url
+                    readonly property bool hasHighStream: String(d2.urlHigh) !== ""
+                    // Volume for whichever player is in front. Only one of the two is ever
+                    // audible: both at once would double the audio during a handoff.
+                    readonly property real playerVolume: Math.max(d2.volume,
+                                                                  root.fullScreenIndex === index && viewportSettings.unmuteWhenFullScreen)
                     readonly property alias column: d2.column
                     readonly property alias row: d2.row
                     readonly property alias columnSpan: d2.columnSpan
@@ -214,7 +216,8 @@ FocusScope {
                     readonly property alias bottomIndex: d2.bottomIndex
                     readonly property alias leftIndex: d2.leftIndex
 
-                    readonly property alias hasAudio: player.hasAudio
+                    readonly property bool hasAudio: xfade.showHigh ? (xfade.highPlayer !== null && xfade.highPlayer.hasAudio)
+                                                                   : player.hasAudio
 
                     states: [
                         State {
@@ -252,6 +255,12 @@ FocusScope {
                     onVisibleChanged: {
                         fullScreen = false;
                         resetZoom();
+                        // Both players stop while the viewport is hidden, so on the way back
+                        // neither has a picture. Put the base one in front: it is the lighter
+                        // stream and will have something to show first. Otherwise a 1x1 preset -
+                        // maximized by definition, so it stays on the high-quality stream -
+                        // comes back to that player's "Loading..." instead.
+                        xfade.showHigh = false;
                     }
                     onFullScreenChanged: {
                         d2.setCurrentIndex("fullScreenIndex", fullScreen)
@@ -275,6 +284,13 @@ FocusScope {
                             cursorColumnOffset = 0;
                             cursorRowOffset = 0;
                         }
+                    }
+                    onMaximizedChanged: maximizedSettleTimer.restart()
+                    Component.onCompleted: {
+                        // Seed the settled state instead of waiting for the timer, so a layout
+                        // that starts out maximized (a 1x1 preset) begins loading its
+                        // high-quality stream immediately.
+                        xfade.maximizedSettled = maximized;
                     }
 
                     function resetZoom() {
@@ -427,6 +443,131 @@ FocusScope {
                         }
                     }
 
+                    // Cross-fade between the base and the high-quality stream.
+                    //
+                    // Changing a player's source tears the RTSP connection down and builds a
+                    // new one, which takes seconds and puts "Loading..." on screen. So rather
+                    // than one player swapping its source, two players overlap: the outgoing
+                    // stream keeps rendering until the incoming one has put a frame on screen,
+                    // and only then does the incoming one fade in over it. Once the fade has
+                    // settled the player behind is stopped, so the steady state is still one
+                    // stream per viewport.
+                    //
+                    // Each player's lifetime depends on the other one's readiness, which as a
+                    // pair of bindings would be a loop - hence explicit state, reconciled in
+                    // update().
+                    QtObject {
+                        id: xfade
+
+                        // Debounced form of "maximized". Assigned only from the settle timer
+                        // and Component.onCompleted, never bound.
+                        property bool maximizedSettled: false
+
+                        readonly property bool wantHigh: maximizedSettled && viewport.hasHighStream
+                        readonly property var highPlayer: highPlayerLoader.item
+
+                        // Loader.active for the high-quality player.
+                        property bool highAlive: false
+                        // Player.visible for the base player, which is what starts and stops
+                        // its decoding.
+                        property bool baseAlive: true
+                        // Which of the two players is in front.
+                        property bool showHigh: false
+
+                        // Set when the high-quality stream is wanted but has not arrived in a
+                        // reasonable time. Without some form of this, a mistyped high-quality
+                        // URL is invisible: the base stream simply keeps playing.
+                        property bool highSlow: false
+
+                        readonly property bool highFailed: wantHigh && !showHigh &&
+                                                           (highSlow ||
+                                                            (highPlayer !== null &&
+                                                             highPlayer.status === MediaPlayer.InvalidMedia))
+
+                        onWantHighChanged: {
+                            if (wantHigh) {
+                                highLoadTimeout.restart();
+                            } else {
+                                highLoadTimeout.stop();
+                                highSlow = false;
+                            }
+
+                            update();
+                        }
+                        onShowHighChanged: {
+                            handoffTimer.restart();
+
+                            if (showHigh) {
+                                highLoadTimeout.stop();
+                                highSlow = false;
+                            }
+                        }
+
+                        function update() {
+                            if (wantHigh) {
+                                // Start the high-quality stream, and leave the base one in
+                                // front until it has something to show.
+                                highAlive = true;
+
+                                if (highPlayer !== null && highPlayer.firstFrameShown) {
+                                    showHigh = true;
+                                }
+                            } else {
+                                // Bring the base stream back, holding the high-quality one in
+                                // front until it has a frame of its own.
+                                baseAlive = true;
+
+                                if (player.firstFrameShown || !highAlive) {
+                                    showHigh = false;
+                                }
+                            }
+
+                            handoffTimer.restart();
+                        }
+                    }
+
+                    Timer {
+                        id: maximizedSettleTimer
+
+                        // Longer than the 250ms maximize transition above, so a burst of
+                        // double-clicks collapses into at most one stream change, and the new
+                        // stream starts loading against a window that has stopped moving.
+                        interval: 300
+
+                        onTriggered: xfade.maximizedSettled = viewport.maximized
+                    }
+
+                    Timer {
+                        id: handoffTimer
+
+                        // Longer than the cross-fade below, so this only ever runs against a
+                        // player that is fully hidden.
+                        interval: 350
+
+                        onTriggered: {
+                            if (xfade.wantHigh) {
+                                if (xfade.showHigh) {
+                                    // High-quality stream is in front: stop the base one.
+                                    xfade.baseAlive = false;
+                                }
+                            } else if (!xfade.showHigh) {
+                                // Base stream is in front, so the high-quality player - which
+                                // may never have become visible at all - can go.
+                                xfade.highAlive = false;
+                            }
+                        }
+                    }
+
+                    Timer {
+                        id: highLoadTimeout
+
+                        // Generous on purpose: this only drives a message claiming the stream is
+                        // unavailable, and a slow camera that does connect should never trip it.
+                        interval: 15000
+
+                        onTriggered: xfade.highSlow = true
+                    }
+
                     Rectangle {
                         id: playerContainer
 
@@ -434,25 +575,20 @@ FocusScope {
                         anchors.fill: parent
                         clip: true
 
-                        Player {
-                            id: player
+                        // Zoom and pan act on both players at once, so they are applied to the
+                        // stack rather than to either player.
+                        Item {
+                            id: playerStack
 
-                            color: root.color
-                            source: viewport.activeUrl
-                            volume: Math.max(viewport.volume, root.fullScreenIndex === index && viewportSettings.unmuteWhenFullScreen)
-                            avOptions: viewport.avFormatOptions
-                            loops: MediaPlayer.Infinite
-                            
-                            // Apply zoom transformation when zoom is enabled
-                            scale: viewport.zoomEnabled ? viewport.zoomScale : 1.0
-                            transformOrigin: Item.TopLeft
-                            
-                            x: viewport.zoomEnabled ? viewport.panX : 0
-                            y: viewport.zoomEnabled ? viewport.panY : 0
-                            
                             width: parent.width
                             height: parent.height
-                            
+
+                            scale: viewport.zoomEnabled ? viewport.zoomScale : 1.0
+                            transformOrigin: Item.TopLeft
+
+                            x: viewport.zoomEnabled ? viewport.panX : 0
+                            y: viewport.zoomEnabled ? viewport.panY : 0
+
                             Behavior on scale {
                                 NumberAnimation { duration: 100; easing.type: Easing.OutQuad }
                             }
@@ -462,6 +598,61 @@ FocusScope {
                             Behavior on y {
                                 NumberAnimation { duration: 100; easing.type: Easing.OutQuad }
                             }
+
+                            Player {
+                                id: player
+
+                                color: root.color
+                                source: viewport.url
+                                volume: xfade.showHigh ? 0 : viewport.playerVolume
+                                avOptions: viewport.avFormatOptions
+                                loops: MediaPlayer.Infinite
+                                // Stops decoding once the high-quality stream is in front. Also
+                                // reads false when the whole viewport is hidden, which is how
+                                // hidden viewports have always stopped their players.
+                                visible: xfade.baseAlive
+                                anchors.fill: parent
+
+                                onFirstFrameShownChanged: xfade.update()
+                            }
+
+                            Loader {
+                                id: highPlayerLoader
+
+                                active: xfade.highAlive
+                                anchors.fill: parent
+                                // Zero while it loads, so neither its black background nor its
+                                // "Loading..." covers the stream still playing underneath.
+                                opacity: xfade.showHigh ? 1 : 0
+
+                                sourceComponent: Player {
+                                    color: root.color
+                                    source: viewport.urlHigh
+                                    volume: xfade.showHigh ? viewport.playerVolume : 0
+                                    avOptions: viewport.avFormatOptions
+                                    loops: MediaPlayer.Infinite
+                                    anchors.fill: parent
+
+                                    onFirstFrameShownChanged: xfade.update()
+                                }
+
+                                Behavior on opacity {
+                                    NumberAnimation { duration: 250; easing.type: Easing.InOutQuad }
+                                }
+                            }
+                        }
+
+                        Text {
+                            id: highStreamWarning
+
+                            text: qsTr("High-quality stream unavailable")
+                            color: "white"
+                            opacity: 0.7
+                            visible: xfade.highFailed
+                            font.pixelSize: 12
+                            anchors.left: parent.left
+                            anchors.bottom: parent.bottom
+                            anchors.margins: 8
                         }
                     }
 
