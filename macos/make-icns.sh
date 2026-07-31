@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Build macos/cctv-viewer.icns from images/cctv-viewer.svg.
+# Build macos/cctv-viewer.icns from macos/appicon.svg.
 #
 # Run once from the repository root:
 #
@@ -9,10 +9,14 @@
 # CMake picks the result up automatically on the next configure. The .icns is a
 # binary build artifact and is not committed, so re-run this after changing the
 # source SVG.
+#
+# The source is the macOS-specific icon, not images/cctv-viewer.svg: this one is
+# drawn on Apple's icon grid (an 824x824 rounded square in a 1024 canvas) so it
+# sits correctly among system icons in the Dock.
 
 set -e
 
-SVG="images/cctv-viewer.svg"
+SVG="macos/appicon.svg"
 OUT="macos/cctv-viewer.icns"
 
 if [ ! -f "$SVG" ]; then
@@ -26,18 +30,17 @@ ICONSET="$TMP/cctv-viewer.iconset"
 mkdir -p "$ICONSET"
 
 # Rasterize once at the largest size, then downscale with sips. sips cannot read
-# SVG itself, hence rsvg-convert, with QuickLook as a fallback.
-if command -v rsvg-convert >/dev/null 2>&1; then
-    rsvg-convert -w 1024 -h 1024 "$SVG" -o "$TMP/base.png"
-elif command -v qlmanage >/dev/null 2>&1; then
-    echo "rsvg-convert not found, falling back to qlmanage (lower quality)."
-    echo "For a sharper icon: brew install librsvg"
-    qlmanage -t -s 1024 -o "$TMP" "$SVG" >/dev/null 2>&1
-    mv "$TMP"/*.png "$TMP/base.png"
-else
-    echo "Need rsvg-convert (brew install librsvg) or qlmanage." >&2
+# SVG itself, hence rsvg-convert.
+#
+# There is deliberately no qlmanage fallback. It renders SVG onto an opaque white
+# background rather than preserving alpha, which bakes a white square around the
+# rounded corners - obvious in the Dock, and invisible in the script's output.
+if ! command -v rsvg-convert >/dev/null 2>&1; then
+    echo "rsvg-convert not found. Install it with: brew install librsvg" >&2
     exit 1
 fi
+
+rsvg-convert -w 1024 -h 1024 "$SVG" -o "$TMP/base.png"
 
 # iconutil expects both 1x and 2x at each size.
 for SIZE in 16 32 128 256 512; do
