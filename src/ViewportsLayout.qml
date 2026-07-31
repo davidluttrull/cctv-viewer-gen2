@@ -190,6 +190,8 @@ FocusScope {
                     property real zoomScale: 1.0
                     property real panX: 0
                     property real panY: 0
+                    // True while the zoomed image is being dragged around.
+                    property bool panning: false
                     // True when this viewport fills the whole layout, either because it was
                     // maximized or because the layout is a single cell.
                     readonly property bool maximized: fullScreen || (root.size.width === 1 && root.size.height === 1)
@@ -297,6 +299,33 @@ FocusScope {
                         zoomScale = 1.0;
                         panX = 0;
                         panY = 0;
+                    }
+
+                    // Cursor feedback for a drag in progress. These live on the viewport rather
+                    // than in the MouseArea below because MouseArea has a cursorShape property
+                    // of its own, which would shadow the window's CursorShape object and make
+                    // "cursorShape.set" a call on an enum. Going through that object rather than
+                    // setting MouseArea.cursorShape directly also leaves
+                    // hideCursorWhenFullScreen working over the video.
+                    function beginPan() {
+                        panning = true;
+                        cursorShape.set(Qt.ClosedHandCursor);
+                    }
+
+                    function endPan() {
+                        if (panning) {
+                            panning = false;
+                            cursorShape.reset();
+                        }
+                    }
+
+                    // Pan offsets run from 0 (image's left/top edge aligned with the viewport)
+                    // down to width - width * zoomScale (right/bottom edge aligned), so they are
+                    // zero or negative. Clamping to that range is what stops the image being
+                    // dragged away from an edge and exposing background.
+                    function setPan(x, y) {
+                        panX = Number(x).clamp(width - width * zoomScale, 0);
+                        panY = Number(y).clamp(height - height * zoomScale, 0);
                     }
 
                     Keys.onPressed: {
@@ -592,10 +621,15 @@ FocusScope {
                             Behavior on scale {
                                 NumberAnimation { duration: 100; easing.type: Easing.OutQuad }
                             }
+                            // Smooths the jump when zooming, but has to be out of the way while
+                            // dragging: animating towards every intermediate mouse position
+                            // makes the image lag behind the cursor and feel like it is sliding.
                             Behavior on x {
+                                enabled: !viewport.panning
                                 NumberAnimation { duration: 100; easing.type: Easing.OutQuad }
                             }
                             Behavior on y {
+                                enabled: !viewport.panning
                                 NumberAnimation { duration: 100; easing.type: Easing.OutQuad }
                             }
 
@@ -702,6 +736,18 @@ FocusScope {
                         // Enable wheel events for zooming
                         acceptedButtons: Qt.LeftButton
 
+                        // Drag-to-pan state: where the press landed, and the pan offset it
+                        // started from. The delta between them is applied on every move.
+                        property real dragOriginX: 0
+                        property real dragOriginY: 0
+                        property real panOriginX: 0
+                        property real panOriginY: 0
+
+                        // Only a zoomed viewport has anywhere to pan to. Below 1.0 the clamp
+                        // range in setPan() is empty, so claiming the drag would do nothing
+                        // visible while taking the gesture away from selection.
+                        readonly property bool canPan: viewport.zoomEnabled && viewport.zoomScale > 1.0
+
                         onPressed: {
                             if (d.activeFocusIndex >= 0 && d.keyModifiers & Qt.ShiftModifier) {
                                 d.selectionIndex2 = model.index;
@@ -709,7 +755,17 @@ FocusScope {
                                 viewport.forceActiveFocus();
                                 d.selectionReset();
                             }
+
+                            if (canPan) {
+                                dragOriginX = mouse.x;
+                                dragOriginY = mouse.y;
+                                panOriginX = viewport.panX;
+                                panOriginY = viewport.panY;
+                                viewport.beginPan();
+                            }
                         }
+                        onReleased: viewport.endPan()
+                        onCanceled: viewport.endPan()
                         onPressAndHold: d2.setCurrentIndex("pressAndHoldIndex", true)
                         onDoubleClicked: {
                             viewport.fullScreen = (root.size.width > 1 && root.size.height > 1) ? !viewport.fullScreen : false;
@@ -738,16 +794,10 @@ FocusScope {
 
                                         viewport.zoomScale = newScale;
 
-                                        viewport.panX = mouseX - imageX * newScale;
-                                        viewport.panY = mouseY - imageY * newScale;
-
-                                        var minPanX = viewport.width - (viewport.width * newScale);
-                                        var maxPanX = 0;
-                                        var minPanY = viewport.height - (viewport.height * newScale);
-                                        var maxPanY = 0;
-
-                                        viewport.panX = Number(viewport.panX).clamp(minPanX, maxPanX);
-                                        viewport.panY = Number(viewport.panY).clamp(minPanY, maxPanY);
+                                        // Keeps the point under the cursor fixed while the scale
+                                        // changes, so the zoom tracks the mouse.
+                                        viewport.setPan(mouseX - imageX * newScale,
+                                                        mouseY - imageY * newScale);
                                     }
                                 }
 
@@ -755,6 +805,12 @@ FocusScope {
                         }
 
                         function mouseMoveHandler() {
+                            if (viewport.panning) {
+                                viewport.setPan(panOriginX + (mouseX - dragOriginX),
+                                                panOriginY + (mouseY - dragOriginY));
+                                return;
+                            }
+
                             if (!containsMouse) {
                                 var selectionIndex2 = viewport.indexAt(mouseX, mouseY);
 
