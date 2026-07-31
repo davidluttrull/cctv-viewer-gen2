@@ -29,6 +29,13 @@ after editing `macos/appicon.svg`; CMake only picks it up at configure time).
 `sh macos/make-dmg.sh` packages a release image, and must run after the
 `codesign` step above, not before.
 
+**`cctv-viewer.qrc` is the list of QML that actually ships.** The QML is compiled
+into the binary, so a `.qml` file the `.qrc` does not name is dead code wherever
+it sits, and editing one fails silently — the build succeeds, the app runs, and
+nothing changes. A stale copy of `ViewportsLayout.qml` at the repository root
+absorbed the whole of 11a7908 that way; the commit read as done for three days
+and had never executed. Check the `.qrc` before editing any QML outside `src/`.
+
 Logs only reach stderr, so launch from a terminal, never Finder:
 
 ```sh
