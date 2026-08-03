@@ -49,7 +49,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             cmake pkg-config \
             qtbase5-dev qtdeclarative5-dev qtquickcontrols2-5-dev \
-            qtmultimedia5-dev qttools5-dev-tools libqt5svg5-dev \
+            qtmultimedia5-dev qttools5-dev qttools5-dev-tools libqt5svg5-dev \
             libavcodec-dev libavformat-dev libavutil-dev \
             libswscale-dev libswresample-dev libavdevice-dev libavfilter-dev \
             libva-dev libx11-dev libgl1-mesa-dev libglx-dev \
