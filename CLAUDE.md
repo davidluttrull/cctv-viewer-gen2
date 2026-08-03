@@ -1,8 +1,13 @@
 # cctv-viewer-stretch — macOS port
 
 Qt 5.15 / QML app for viewing many RTSP streams at once. Fork of
-`iEvgeny/cctv-viewer`. Upstream targets Linux, Windows and Android; the macOS
-port lives on the `macos-build` branch.
+`iEvgeny/cctv-viewer`. Upstream targets Linux, Windows and Android; this fork
+adds macOS and ships macOS and Linux release artifacts from one trunk.
+
+`master` is the trunk — all work lands there, and platform differences are
+handled by guards rather than by separate branches. `macos-build` is the former
+name of this same lineage, kept only until the clones tracking it move over. Do
+not start a parallel platform branch; see the Conventions section.
 
 **`BUILD-macos.md` is the canonical build, deploy and hardware-decoding
 reference.** Read it before doing any of that work — do not duplicate its

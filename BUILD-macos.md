@@ -11,8 +11,12 @@ and FFmpeg 8.x (libavcodec 62) from Homebrew.
 ```sh
 git clone --recurse-submodules https://github.com/davidluttrull/cctv-viewer-stretch.git
 cd cctv-viewer-stretch
-git checkout macos-build
 ```
+
+`master` is the trunk and carries both the macOS and Linux targets, so a plain
+clone is enough — no branch to check out. The `macos-build` branch is the old
+name for this same work and is retained only until the clones still tracking it
+have moved over.
 
 `src/qmlav` is a submodule and the build fails without it. If you already
 cloned without `--recurse-submodules`, run
@@ -264,18 +268,21 @@ the image attached.
 The runners are Apple silicon, so the result is **arm64 only**. Intel Macs would
 need a second job on `macos-13` and a second image.
 
-The workflow also declares `workflow_dispatch`, but that will not appear in the
-Actions tab or work from `gh workflow run` until the file exists on the
-repository's **default branch**. It currently lives only on `macos-build`, and
-GitHub registers manual triggers from the default branch alone:
+The workflow also declares `workflow_dispatch` for a manual run from the Actions
+tab or `gh workflow run`. GitHub registers manual triggers from the **default
+branch only**, so this works now that `master` is the trunk. If a new workflow
+ever fails to appear, that is the reason:
 
 ```
-HTTP 404: workflow macos-release.yml not found on the default branch
+HTTP 404: workflow <name>.yml not found on the default branch
 ```
 
-Tag pushes are unaffected — those are evaluated against the workflow file in the
-tag's own commit, so releasing works regardless. To get the manual trigger,
-the workflow file has to be merged to `master`.
+Tag pushes are unaffected either way — those are evaluated against the workflow
+file in the tag's own commit.
+
+A companion `linux-release.yml` builds an AppImage on the same triggers, so one
+tag produces both artifacts on a single release page. See its header comment for
+why it pins `ubuntu-22.04` rather than `ubuntu-latest`.
 
 ### Switching to a Developer ID
 
