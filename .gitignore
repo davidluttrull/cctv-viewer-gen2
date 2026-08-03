@@ -32,6 +32,11 @@ Makefile*
 *.qm
 *.prl
 
+# core.ignorecase is true on macOS, so the *build-* pattern above also matches
+# BUILD-macos.md and BUILD-linux.md. BUILD-macos.md only escapes it by having
+# been tracked first; a new one would be silently ignored.
+!BUILD-*.md
+
 # Qt unit tests
 target_wrapper.*
 

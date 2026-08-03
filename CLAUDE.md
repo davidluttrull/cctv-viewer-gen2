@@ -9,6 +9,13 @@ handled by guards rather than by separate branches. `macos-build` is the former
 name of this same lineage, kept only until the clones tracking it move over. Do
 not start a parallel platform branch; see the Conventions section.
 
+**`BUILD-linux.md` is the canonical reference for Linux** — build, AppImage, and
+the VA-API hardware-acceleration task, which is **open and unverified**. Read it
+before any Linux work. Two things it will save you: the apt package names do not
+match CMake's component names (`qtmultimedia5-dev` and `qttools5-dev` are the
+ones that bite), and the VA-API/GLX module is X11-only, refusing to load unless
+`QGuiApplication::platformName()` is `xcb`.
+
 **`BUILD-macos.md` is the canonical build, deploy and hardware-decoding
 reference.** Read it before doing any of that work — do not duplicate its
 content here. This file covers only what an agent needs that a build guide
@@ -138,6 +145,10 @@ ffmpeg -re -f lavfi -i "testsrc=size=640x480:rate=15" -c:v libx264 \
   Details in `BUILD-macos.md`.
 - **BGRA needs full colour range**, and the misleading part is that
   `av_hwframe_ctx_init()` succeeds anyway. Details in `BUILD-macos.md`.
+- **Neither of those macOS bugs has a Linux analogue.** The GLX path already
+  requests `GLX_TEXTURE_2D_EXT` and binds `GL_TEXTURE_2D`, so `GLTextureHandle`
+  is correct there — do not "fix" it to `GLTextureRectangleHandle`. The colour
+  range problem was specific to FFmpeg's VideoToolbox format table.
 
 - **Stream quality switching uses two overlapping players, not one player
   changing `source`.** Changing `source` tears down the RTSP connection and

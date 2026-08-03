@@ -97,12 +97,19 @@ jobs:
           test -f AppDir/usr/share/pixmaps/cctv-viewer.svg
 
       - name: Fetch linuxdeploy
+        # Into tools/ rather than the workspace root: linuxdeploy and its Qt
+        # plugin are themselves AppImages, so leaving them alongside ours makes
+        # every *.AppImage glob below match three files. That shipped 30MB of
+        # build tooling as release assets on v0.1.12.
         run: |
           BASE="https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous"
           QT_BASE="https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous"
-          wget -q "$BASE/linuxdeploy-x86_64.AppImage"
-          wget -q "$QT_BASE/linuxdeploy-plugin-qt-x86_64.AppImage"
-          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
+          mkdir -p tools
+          wget -q -P tools "$BASE/linuxdeploy-x86_64.AppImage"
+          wget -q -P tools "$QT_BASE/linuxdeploy-plugin-qt-x86_64.AppImage"
+          chmod +x tools/*.AppImage
+          # linuxdeploy locates its plugins on PATH.
+          echo "$PWD/tools" >> "$GITHUB_PATH"
 
       - name: Bundle Qt and FFmpeg into the AppDir
         env:
@@ -110,7 +117,7 @@ jobs:
           # QML to scan for imports so it knows which modules to bundle.
           QML_SOURCES_PATHS: ${{ github.workspace }}
         run: |
-          ./linuxdeploy-x86_64.AppImage \
+          ./tools/linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
             --plugin qt \
             --desktop-file AppDir/usr/share/applications/cctv-viewer.desktop \
@@ -136,14 +143,14 @@ jobs:
           # VERSION lands in the output filename when set; unset it just yields
           # an unversioned name rather than failing.
           export VERSION
-          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
-          ls -la ./*.AppImage
+          ./tools/linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
+          ls -la ./CCTV*.AppImage
 
       - name: Upload the AppImage as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: cctv-viewer-appimage
-          path: ./*.AppImage
+          path: ./CCTV*.AppImage
           if-no-files-found: error
 
       - name: Attach the AppImage to the release
@@ -154,8 +161,8 @@ jobs:
         # the release, so upload to an existing one when it is already there.
         run: |
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-              gh release upload "$GITHUB_REF_NAME" ./*.AppImage --clobber
+              gh release upload "$GITHUB_REF_NAME" ./CCTV*.AppImage --clobber
           else
-              gh release create "$GITHUB_REF_NAME" ./*.AppImage \
+              gh release create "$GITHUB_REF_NAME" ./CCTV*.AppImage \
                 --title "CCTV Viewer $GITHUB_REF_NAME"
           fi
