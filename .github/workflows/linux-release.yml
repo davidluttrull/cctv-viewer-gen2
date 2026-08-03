@@ -49,7 +49,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             cmake pkg-config \
             qtbase5-dev qtdeclarative5-dev qtquickcontrols2-5-dev \
-            qttools5-dev-tools libqt5svg5-dev \
+            qtmultimedia5-dev qttools5-dev-tools libqt5svg5-dev \
             libavcodec-dev libavformat-dev libavutil-dev \
             libswscale-dev libswresample-dev libavdevice-dev libavfilter-dev \
             libva-dev libx11-dev libgl1-mesa-dev libglx-dev \
@@ -65,6 +65,14 @@ jobs:
             qml-module-qtquick-templates2 qml-module-qtquick-dialogs \
             qml-module-qtgraphicaleffects qml-module-qt-labs-settings \
             qml-module-qtmultimedia
+
+      - name: List the Qt modules apt actually provided
+        # CMakeLists requires Core, Quick, Multimedia, QuickCompiler and
+        # LinguistTools. Debian splits those across packages whose names do not
+        # match the CMake component names, so a missing one surfaces as an
+        # opaque find_package failure. Printing what is present turns the next
+        # such failure into a one-line diagnosis instead of a CI round trip.
+        run: ls /usr/lib/x86_64-linux-gnu/cmake/ | grep -i qt5 | tr '\n' ' '
 
       - name: Configure
         # CMAKE_INSTALL_PREFIX must be /usr rather than the AppDir: linuxdeploy
