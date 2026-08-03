@@ -64,6 +64,17 @@ jobs:
         # imported at runtime. Without it the app opens to a blank window.
         run: '"$(brew --prefix qt@5)/bin/macdeployqt" build/cctv-viewer.app -qmldir=.'
 
+      - name: Make the bundle self-contained
+        # macdeployqt leaves FFmpeg's libraries referring to each other by the
+        # build machine's absolute Homebrew path, and on a clean checkout it
+        # does not deploy the SVG image plugin at all. Both are invisible to
+        # the machine that built the bundle and fatal on the user's, and both
+        # shipped in v0.1.9 through v0.1.11 from this very workflow - a clean
+        # checkout every run is exactly the condition that triggers the second
+        # one. Must run before either signing step: it rewrites Mach-O load
+        # commands, which invalidates a signature just as macdeployqt does.
+        run: sh macos/fixup-bundle.sh build/cctv-viewer.app
+
       - name: Check for a Developer ID certificate
         id: creds
         env:
