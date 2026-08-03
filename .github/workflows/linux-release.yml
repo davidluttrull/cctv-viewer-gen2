@@ -1,0 +1,153 @@
+# Builds the Linux AppImage and attaches it to a GitHub release.
+#
+# Push a tag to publish:
+#
+#     git tag v0.1.12 && git push origin v0.1.12
+#
+# Or run it from the Actions tab (workflow_dispatch) to get an AppImage as a
+# workflow artifact without publishing anything.
+#
+# The same tag also triggers macos-release.yml, so one tag produces both the
+# DMG and the AppImage on a single release page.
+#
+# Beyond shipping an artifact, this workflow is the only thing that compiles the
+# Linux target at all - the port work happens on macOS, where the VA-API/GLX and
+# X11 paths are excluded from the build entirely. Treat a red run here as a
+# genuine Linux regression rather than a CI problem.
+
+name: Linux release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    # Deliberately not ubuntu-latest. An AppImage built against a newer glibc
+    # will not start on an older distribution, and the reverse is fine, so the
+    # oldest supported base wins: 22.04 covers Linux Mint 21 (Ubuntu 22.04) and
+    # still runs on Mint 22 (Ubuntu 24.04). Bumping this silently drops support
+    # for the older Mint.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # src/qmlav only, deliberately not recursive: qmlav's own nested
+          # FFmpeg submodule is a 90MB checkout that only the Android build
+          # uses, and cloning it here would dominate the run time.
+          submodules: true
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake pkg-config \
+            qtbase5-dev qtdeclarative5-dev qtquickcontrols2-5-dev \
+            qttools5-dev-tools libqt5svg5-dev \
+            libavcodec-dev libavformat-dev libavutil-dev \
+            libswscale-dev libswresample-dev libavdevice-dev libavfilter-dev \
+            libva-dev libx11-dev libgl1-mesa-dev libglx-dev \
+            libfuse2 wget file
+
+          # Runtime QML modules. These are not build dependencies - CMake
+          # succeeds without them - but linuxdeploy's Qt plugin can only bundle
+          # QML modules that exist on the build machine, and a missing one shows
+          # up as a blank window at runtime rather than any build error.
+          sudo apt-get install -y --no-install-recommends \
+            qml-module-qtquick2 qml-module-qtquick-window2 \
+            qml-module-qtquick-controls2 qml-module-qtquick-layouts \
+            qml-module-qtquick-templates2 qml-module-qtquick-dialogs \
+            qml-module-qtgraphicaleffects qml-module-qt-labs-settings \
+            qml-module-qtmultimedia
+
+      - name: Configure
+        # CMAKE_INSTALL_PREFIX must be /usr rather than the AppDir: linuxdeploy
+        # expects an AppDir laid out as /usr inside it, and supplies that prefix
+        # via DESTDIR at install time instead.
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Install into the AppDir
+        run: |
+          DESTDIR="$PWD/AppDir" cmake --install build
+          # CMakeLists installs the .desktop file and pixmap to absolute /usr
+          # paths, so confirm they landed where linuxdeploy will look rather
+          # than discovering a silently iconless AppImage later.
+          test -f AppDir/usr/bin/cctv-viewer
+          test -f AppDir/usr/share/applications/cctv-viewer.desktop
+          test -f AppDir/usr/share/pixmaps/cctv-viewer.svg
+
+      - name: Fetch linuxdeploy
+        run: |
+          BASE="https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous"
+          QT_BASE="https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous"
+          wget -q "$BASE/linuxdeploy-x86_64.AppImage"
+          wget -q "$QT_BASE/linuxdeploy-plugin-qt-x86_64.AppImage"
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
+
+      - name: Bundle Qt and FFmpeg into the AppDir
+        env:
+          # The analogue of macdeployqt's -qmldir=. - tells the Qt plugin which
+          # QML to scan for imports so it knows which modules to bundle.
+          QML_SOURCES_PATHS: ${{ github.workspace }}
+        run: |
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --plugin qt \
+            --desktop-file AppDir/usr/share/applications/cctv-viewer.desktop \
+            --icon-file AppDir/usr/share/pixmaps/cctv-viewer.svg
+
+      - name: Keep VA-API on the host's drivers
+        # libva dispatches to a vendor driver (iHD/i965 for Intel, radeonsi for
+        # AMD) loaded from the host. A bundled libva can fail to load the host's
+        # driver when the two versions disagree, which silently costs hardware
+        # decoding - the app keeps working on the CPU path, so nothing obviously
+        # breaks. Dropping ours makes the host's libva authoritative.
+        run: |
+          rm -fv AppDir/usr/lib/libva.so* \
+                 AppDir/usr/lib/libva-x11.so* \
+                 AppDir/usr/lib/libva-drm.so* || true
+
+      - name: Build the AppImage
+        run: |
+          VERSION=""
+          case "$GITHUB_REF" in
+              refs/tags/v*) VERSION="${GITHUB_REF_NAME#v}" ;;
+          esac
+          # VERSION lands in the output filename when set; unset it just yields
+          # an unversioned name rather than failing.
+          export VERSION
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
+          ls -la ./*.AppImage
+
+      - name: Upload the AppImage as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cctv-viewer-appimage
+          path: ./*.AppImage
+          if-no-files-found: error
+
+      - name: Attach the AppImage to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # macos-release.yml runs on the same tag and may win the race to create
+        # the release, so upload to an existing one when it is already there.
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+              gh release upload "$GITHUB_REF_NAME" ./*.AppImage --clobber
+          else
+              gh release create "$GITHUB_REF_NAME" ./*.AppImage \
+                --title "CCTV Viewer $GITHUB_REF_NAME"
+          fi
