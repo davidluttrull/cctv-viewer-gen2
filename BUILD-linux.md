@@ -182,6 +182,24 @@ recognize Gen8+ hardware at all - on a modern Intel GPU there is no fallback
 driver to switch to if something about `iHD` doesn't work, which is exactly why
 the EGL integration fix above, not a driver swap, was the way through this.
 
+**`vainfo` must also list `VAProfileNone : VAEntrypointVideoProc` - not just an
+H264/HEVC decode entrypoint.** That's the VPP entrypoint `initializeVPP()` in
+`qmlavhwoutput.cpp` uses for the NV12-to-RGB conversion step; without it,
+`vaCreateConfig()` fails with `VA_STATUS_ERROR_UNSUPPORTED_PROFILE` (`0xc`).
+Debian/Ubuntu's default `intel-media-va-driver` package (the `+dfsg`-suffixed
+build in `universe`) omits it on at least Coffee Lake (UHD 630, confirmed on
+Mint 22 / Ubuntu 24.04) - `intel-media-va-driver-non-free` from `multiverse` has
+it. `apt install intel-media-va-driver-non-free` and re-run `vainfo` to check.
+
+This failure mode is worse than a quiet CPU fallback: `handle()` in
+`qmlavhwoutput.cpp` returns an empty value on `initializeVPP()` failure, and
+nothing upstream of it falls back to CPU-rendered display, so every viewport
+goes black - and because the failed VPP config isn't cached, it retries
+`vaCreateConfig()` on every single decoded frame, on every camera, flooding the
+log with `vaCreateConfig() for VPP failed` under `qmlav.*=true`. A quiet log
+free of that message is not enough to conclude VPP is missing - check `vainfo`
+directly.
+
 ### The local test stream needs `-pix_fmt yuv420p`
 
 The `ffmpeg` CLI is not one of the dev packages above and is not pulled in by
