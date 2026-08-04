@@ -4,8 +4,8 @@ Targets Linux Mint. Mint 21 is Ubuntu 22.04, Mint 22 is Ubuntu 24.04; the
 package names below are the same on both.
 
 **Status:** the Linux target builds clean in CI (`.github/workflows/linux-release.yml`,
-zero warnings) and packages as an AppImage. **Hardware acceleration is
-implemented and verified working**, but is not the default yet - see section 5.
+zero warnings) and packages as an AppImage. **Hardware acceleration is on by
+default** on `xcb` (X11) - see section 5.
 
 ## 1. Clone with submodules
 
@@ -107,18 +107,25 @@ engine is still reading from to display frame N. `m_rgbSurfaces[2]` alternates
 per frame for exactly this reason - do not collapse it back to one surface as
 a "simplification."
 
-Select it with:
+**On by default on Linux**, via the same `Settings`-default mechanism as the
+macOS `cvgl` block: `src/RootWindow.qml`'s `defaultAVFormatOptions` sets it for
+any config where nothing has been persisted yet. `main.cpp` forces
+`QT_XCB_GL_INTEGRATION=xcb_egl` before `QGuiApplication` exists (constraint 3
+below), so no environment setup is needed either - a stock launch on X11 gets
+hardware decoding for free.
+
+Select it by hand (Settings → Viewport → "Default FFmpeg options") if
+overriding a persisted value:
 
 ```
 -hwaccel vaapi -hwaccel_output egl
 ```
 
-Try it by hand first (Settings → Viewport → "Default FFmpeg options"), then make
-it a default by mirroring the macOS block in `src/RootWindow.qml`'s
-`defaultAVFormatOptions`. That is a `Settings` default, so it only applies where
-nothing has been persisted — an existing install keeps its current value. That
-step has not been done - a fresh Linux build still decodes on the CPU until it
-is, or until `-hwaccel_output egl` is set by hand.
+An existing config already has *some* value persisted for
+`defaultAVFormatOptions` - that's the whole point of it being a per-install
+setting - so upgrading an existing install does not retroactively turn this
+on. It has to be set once, by hand or by resetting that key, same as any other
+`Settings` default.
 
 ### Hard constraints
 
@@ -135,9 +142,13 @@ if (avHWDeviceType() != AV_HWDEVICE_TYPE_VAAPI ||
    module refuses to load. Mint's Cinnamon defaults to X11, so this normally
    holds — but it is a real ceiling, and `QT_QPA_PLATFORM=xcb` is the workaround
    if the session is Wayland.
-3. **`QT_XCB_GL_INTEGRATION=xcb_egl` must be set before launch.** Qt 5's default
-   GL integration on X11 is GLX. This module imports a dma-buf as an `EGLImage`
-   via `eglGetCurrentDisplay()` and then binds it as a texture in whatever GL
+3. **`QT_XCB_GL_INTEGRATION=xcb_egl` must be set before `QGuiApplication` exists.**
+   `main.cpp` does this automatically (skipped if the environment already sets
+   one, so a deliberate override still wins) - this is only something to think
+   about if that guard is ever removed, or when running code that constructs
+   `QGuiApplication` some other way. Qt 5's default GL integration on X11 is
+   GLX. This module imports a dma-buf as an `EGLImage` via
+   `eglGetCurrentDisplay()` and then binds it as a texture in whatever GL
    context is current - which only works when that context is itself EGL-based.
    Under the default GLX integration, an earlier version of this code obtained
    its own, separate EGL display (`eglGetDisplay(glXGetCurrentDisplay())`)
@@ -150,11 +161,11 @@ if (avHWDeviceType() != AV_HWDEVICE_TYPE_VAAPI ||
    format modifier reports `0x0` (linear), so Intel's implicit-tiling was not
    the cause either.
 
-Launch like this:
+A stock launch already has this covered - `QT_XCB_GL_INTEGRATION` doesn't need
+setting by hand unless testing what happens without `main.cpp`'s guard:
 
 ```sh
-QT_XCB_GL_INTEGRATION=xcb_egl QT_LOGGING_RULES='qmlav.*=true' \
-  ./build/cctv-viewer --config <path> 2>&1 | tee /tmp/cctv.log
+QT_LOGGING_RULES='qmlav.*=true' ./build/cctv-viewer --config <path> 2>&1 | tee /tmp/cctv.log
 ```
 
 ### Check the driver first

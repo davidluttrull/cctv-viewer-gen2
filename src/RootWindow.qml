@@ -109,6 +109,15 @@ ApplicationWindow {
                 // system memory with av_hwframe_transfer_data(), on the render
                 // thread and serialized across all viewports.
                 options["hwaccel_output"] = "cvgl";
+            } else if (Qt.platform.os === "linux") {
+                options["hwaccel"] = "vaapi";
+                // Keep decoded frames on the GPU, same reason as cvgl above.
+                // Needs the "xcb" platform and Qt's own GL context to be
+                // EGL-based (main.cpp forces QT_XCB_GL_INTEGRATION=xcb_egl);
+                // QmlAVOptions::hwOutput() already refuses this module and
+                // falls back to CPU decode by itself when neither holds, e.g.
+                // under Wayland. See BUILD-linux.md §5.
+                options["hwaccel_output"] = "egl";
             }
 
             return JSON.stringify(options);

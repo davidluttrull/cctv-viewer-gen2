@@ -52,6 +52,20 @@ int main(int argc, char *argv[])
     qputenv("QT_QUICK_CONTROLS_CONF", ":/qtquickcontrols2-macos.conf");
 #endif
 
+#if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
+    // The VA-API hardware-decode output module (QmlAVHWOutput_VAAPI_EGL) imports
+    // a dma-buf as a texture via eglGetCurrentDisplay(), which only returns
+    // something usable when Qt's own GL context is itself EGL-based. Qt 5's
+    // default GL integration on X11 is GLX, so force EGL here, before
+    // QGuiApplication exists - that construction is when the choice is made.
+    // A no-op under Wayland, where this variable isn't consulted, and skipped
+    // if the user (or session) already set one, so a deliberate override still
+    // wins. See BUILD-linux.md §5.
+    if (!qEnvironmentVariableIsSet("QT_XCB_GL_INTEGRATION")) {
+        qputenv("QT_XCB_GL_INTEGRATION", "xcb_egl");
+    }
+#endif
+
 #if defined(APP_NAME)
     QCoreApplication::setApplicationName(QLatin1String(APP_NAME));
 #endif

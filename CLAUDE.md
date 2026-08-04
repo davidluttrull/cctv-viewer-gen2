@@ -10,13 +10,13 @@ name of this same lineage, kept only until the clones tracking it move over. Do
 not start a parallel platform branch; see the Conventions section.
 
 **`BUILD-linux.md` is the canonical reference for Linux** — build, AppImage, and
-the VA-API hardware-acceleration path, which is implemented and verified
-working but not yet wired up as the default. Read it before any Linux work.
-Three things it will save you: the apt package names do not match CMake's
-component names (`qtmultimedia5-dev` and `qttools5-dev` are the ones that
-bite), the VA-API/EGL module is X11-only, refusing to load unless
-`QGuiApplication::platformName()` is `xcb`, and it also requires Qt's GL
-integration itself to be EGL-based (`QT_XCB_GL_INTEGRATION=xcb_egl`) - Qt's
+the VA-API hardware-acceleration path, which is on by default on `xcb` (X11).
+Read it before any Linux work. Three things it will save you: the apt package
+names do not match CMake's component names (`qtmultimedia5-dev` and
+`qttools5-dev` are the ones that bite), the VA-API/EGL module is X11-only,
+refusing to load unless `QGuiApplication::platformName()` is `xcb`, and it also
+requires Qt's GL integration itself to be EGL-based
+(`QT_XCB_GL_INTEGRATION=xcb_egl`, which `main.cpp` sets automatically) - Qt's
 default GLX integration crashes the driver on every frame instead.
 
 **`BUILD-macos.md` is the canonical build, deploy and hardware-decoding
