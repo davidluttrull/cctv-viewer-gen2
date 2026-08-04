@@ -4,9 +4,8 @@ Targets Linux Mint. Mint 21 is Ubuntu 22.04, Mint 22 is Ubuntu 24.04; the
 package names below are the same on both.
 
 **Status:** the Linux target builds clean in CI (`.github/workflows/linux-release.yml`,
-zero warnings) and packages as an AppImage. **Hardware acceleration is not
-enabled yet** — that is the open task, see section 5. Until then Linux decodes
-on the CPU while macOS does not.
+zero warnings) and packages as an AppImage. **Hardware acceleration is
+implemented and verified working**, but is not the default yet - see section 5.
 
 ## 1. Clone with submodules
 
@@ -37,8 +36,12 @@ sudo apt install \
   qtmultimedia5-dev qttools5-dev qttools5-dev-tools libqt5svg5-dev \
   libavcodec-dev libavformat-dev libavutil-dev \
   libswscale-dev libswresample-dev libavdevice-dev libavfilter-dev \
-  libva-dev libx11-dev libgl1-mesa-dev libglx-dev
+  libva-dev libx11-dev libgl1-mesa-dev libglx-dev libegl-dev
 ```
+
+`libegl-dev` is for the VA-API hardware-acceleration path (section 5) - not a
+transitive dependency of anything else in this list, so it is easy to drop by
+copy-pasting an older version of this command.
 
 Runtime QML modules — not needed to compile, but a missing one is a blank window
 at runtime with no build error:
@@ -84,28 +87,33 @@ experiments rather than editing the real config, which holds camera credentials
 in plaintext. A 1×1 layout is maximized by definition, so a single-viewport
 config exercises the maximized path at startup with no clicking.
 
-## 5. Hardware acceleration — the open task
+## 5. Hardware acceleration
 
-Nothing currently defaults hardware decoding on Linux, so this is CPU decode
-today. The pieces already exist: `QmlAVHWOutput_VAAPI_GLX` in
-`src/qmlav/src/qmlavhwoutput.cpp` maps a VA-API surface to an X11 pixmap, then
-to a GLX pixmap, then to a GL texture — the Linux equivalent of what `cvgl` does
-on macOS.
+`QmlAVHWOutput_VAAPI_EGL` in `src/qmlav/src/qmlavhwoutput.cpp` runs the decoded
+VA-API surface (NV12) through VA-API's VPP to convert it to a single RGB
+surface on the GPU, exports that surface as a DRM PRIME dma-buf, and imports it
+directly as a GL texture via EGL. The VPP round trip exists because Qt 5's
+video material only knows how to sample a single already-RGB texture, not
+two-plane YUV - see the class comment in `qmlavhwoutput.h` for the full
+reasoning.
 
 Select it with:
 
 ```
--hwaccel vaapi -hwaccel_output glx
+-hwaccel vaapi -hwaccel_output egl
 ```
 
 Try it by hand first (Settings → Viewport → "Default FFmpeg options"), then make
 it a default by mirroring the macOS block in `src/RootWindow.qml`'s
 `defaultAVFormatOptions`. That is a `Settings` default, so it only applies where
-nothing has been persisted — an existing install keeps its current value.
+nothing has been persisted — an existing install keeps its current value. That
+step has not been done - a fresh Linux build still decodes on the CPU until it
+is, or until `-hwaccel_output egl` is set by hand.
 
-### Two hard constraints
+### Hard constraints
 
-`QmlAVOptions::hwOutput()` refuses the module unless **both** hold:
+`QmlAVOptions::hwOutput()` refuses the module unless the first two hold, and
+the third is required for a different reason - see below:
 
 ```cpp
 if (avHWDeviceType() != AV_HWDEVICE_TYPE_VAAPI ||
@@ -117,6 +125,27 @@ if (avHWDeviceType() != AV_HWDEVICE_TYPE_VAAPI ||
    module refuses to load. Mint's Cinnamon defaults to X11, so this normally
    holds — but it is a real ceiling, and `QT_QPA_PLATFORM=xcb` is the workaround
    if the session is Wayland.
+3. **`QT_XCB_GL_INTEGRATION=xcb_egl` must be set before launch.** Qt 5's default
+   GL integration on X11 is GLX. This module imports a dma-buf as an `EGLImage`
+   via `eglGetCurrentDisplay()` and then binds it as a texture in whatever GL
+   context is current - which only works when that context is itself EGL-based.
+   Under the default GLX integration, an earlier version of this code obtained
+   its own, separate EGL display (`eglGetDisplay(glXGetCurrentDisplay())`)
+   instead, and that segfaulted inside the Mesa driver on every single frame:
+   importing a dma-buf through one Mesa screen and binding it as a texture
+   through a different one is not safe on this stack, even though both
+   ultimately talk to the same GPU over the same X11 connection. Two other
+   hypotheses were checked and ruled out before finding this - the DRM-PRIME
+   descriptor's fields (fourcc, pitch, offset) are correct, and the surface's
+   format modifier reports `0x0` (linear), so Intel's implicit-tiling was not
+   the cause either.
+
+Launch like this:
+
+```sh
+QT_XCB_GL_INTEGRATION=xcb_egl QT_LOGGING_RULES='qmlav.*=true' \
+  ./build/cctv-viewer --config <path> 2>&1 | tee /tmp/cctv.log
+```
 
 ### Check the driver first
 
@@ -127,19 +156,59 @@ vainfo
 
 `vainfo` must list H264 decode entrypoints. On Intel it selects the `iHD` driver
 on newer hardware and `i965` on older; if `vainfo` fails, nothing in the app can
-work and the problem is the driver, not this code.
+work and the problem is the driver, not this code. Note that `i965` does not
+recognize Gen8+ hardware at all - on a modern Intel GPU there is no fallback
+driver to switch to if something about `iHD` doesn't work, which is exactly why
+the EGL integration fix above, not a driver swap, was the way through this.
+
+### The local test stream needs `-pix_fmt yuv420p`
+
+The `ffmpeg` CLI is not one of the dev packages above and is not pulled in by
+any of them - `sudo apt install ffmpeg` if `ffmpeg -version` doesn't work.
+
+`ffmpeg -f lavfi -i testsrc=... -c:v libx264 ...` with no explicit `-pix_fmt`
+encodes YUV 4:4:4 - `testsrc`'s raw output is `rgb24`, and libx264 picks the
+closest lossless match to it. VA-API only decodes the 4:2:0 profiles `vainfo`
+lists above, so a 4:4:4 stream makes `negotiatePixelFormatCb()` in
+`qmlavdecoder.cpp` silently fall through to CPU decode - no warning, and the
+picture plays back fine, which reads as "hardware acceleration works" when
+nothing was accelerated. Real cameras send 4:2:0, so this never bites in
+production; it only bites this synthetic test stream. Always force it:
+
+```sh
+ffmpeg -re -f lavfi -i "testsrc=size=640x480:rate=15" -pix_fmt yuv420p -c:v libx264 \
+  -preset ultrafast -tune zerolatency -g 15 \
+  -f mpegts "udp://127.0.0.1:9999?pkt_size=1316"
+```
+
+(Same recipe the macOS section above documents, plus `-pix_fmt yuv420p`.)
 
 ### How to verify it actually works
 
 **Decode succeeding proves nothing about display.** This is the hard-won lesson
 from the macOS side, where decode, texture creation and every log line looked
-healthy while every viewport was black. Check both:
+healthy while every viewport was black - and it bit this port too, twice
+(the silent CPU fallback above, then the GLX-integration segfault), before
+landing on the current implementation.
 
-1. **Count the module's log lines against the viewport count.** The output module
-   logs once per instance, so N lines in an N-viewport grid means all of them
-   reached the zero-copy path. Fewer means some fell back, and the reason is in
-   the log.
-2. **Look at the window.** Do not infer success from clean logs.
+`QmlAVHWOutput_VAAPI_EGL` has no per-instance success log line, only warnings
+on failure (`vaExportSurfaceHandle() failed`, `eglCreateImageKHR() failed`,
+`GL_OES_EGL_image is not supported`, ...), so counting log lines the way the
+macOS CoreVideo module allows does not apply here - a silent CPU fallback and a
+genuinely working hardware path both produce a perfectly quiet log. Check
+instead:
+
+1. **Look at the window.** Do not infer success from clean logs.
+2. **GPU engine counters**, which is what actually tells the two apart:
+
+   ```sh
+   sudo intel_gpu_top
+   ```
+
+   Look for non-zero `Video` (decode) and `Render/3D` (the VPP conversion)
+   engine usage attributed to the `cctv-viewer` process while a stream plays.
+   Both reading 0% means nothing is running on the GPU, no matter how correct
+   the picture looks or how quiet the log is - CPU decode renders correctly too.
 
 Counting live connections answers "which streams are running" without the screen:
 
@@ -147,19 +216,21 @@ Counting live connections answers "which streams are running" without the screen
 lsof -nP -a -p "$(pgrep -x cctv-viewer)" -i TCP | grep -c ESTABLISHED
 ```
 
-### What not to go looking for
+### What used to be here
 
-The macOS module hit a texture-target mismatch:
-`CVOpenGLTextureCache` returns `GL_TEXTURE_RECTANGLE_ARB`, which Qt's default
-`GLTextureHandle` material cannot bind, giving black viewports with healthy
-logs. **The GLX path does not have this problem.** It explicitly requests
-`GLX_BIND_TO_TEXTURE_TARGETS_EXT, GLX_TEXTURE_2D_BIT_EXT` and
-`GLX_TEXTURE_TARGET_EXT, GLX_TEXTURE_2D_EXT`, then binds `GL_TEXTURE_2D`
-(`qmlavhwoutput.cpp:71`), so `GLTextureHandle` is already correct. Do not
-"fix" it to `GLTextureRectangleHandle`.
+An earlier version of this module, `QmlAVHWOutput_VAAPI_GLX`, mapped the VA-API
+surface to an X11 pixmap via `vaPutSurface()`, then to a GLX pixmap, then to a
+GL texture via `GLX_EXT_texture_from_pixmap` - the direct Linux equivalent of
+what `cvgl` does on macOS. `vaPutSurface()` returned
+`VA_STATUS_ERROR_INVALID_PARAMETER` on every single frame on `iHD` - the only
+driver this hardware supports. The legacy VA/X11 `vaPutSurface` path that
+approach depends on is known to be poorly supported on Intel's modern media
+driver; this is a known category of problem across the ecosystem (several
+other GL/VA-API integrations have moved off it for the same reason), not
+something specific to this codebase.
 
-Likewise the BGRA colour-range problem was specific to FFmpeg's VideoToolbox
-format table and has no VA-API analogue.
+Likewise the BGRA colour-range problem noted in the macOS section above was
+specific to FFmpeg's VideoToolbox format table and has no VA-API analogue.
 
 ## 6. AppImage
 

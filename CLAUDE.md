@@ -10,11 +10,14 @@ name of this same lineage, kept only until the clones tracking it move over. Do
 not start a parallel platform branch; see the Conventions section.
 
 **`BUILD-linux.md` is the canonical reference for Linux** — build, AppImage, and
-the VA-API hardware-acceleration task, which is **open and unverified**. Read it
-before any Linux work. Two things it will save you: the apt package names do not
-match CMake's component names (`qtmultimedia5-dev` and `qttools5-dev` are the
-ones that bite), and the VA-API/GLX module is X11-only, refusing to load unless
-`QGuiApplication::platformName()` is `xcb`.
+the VA-API hardware-acceleration path, which is implemented and verified
+working but not yet wired up as the default. Read it before any Linux work.
+Three things it will save you: the apt package names do not match CMake's
+component names (`qtmultimedia5-dev` and `qttools5-dev` are the ones that
+bite), the VA-API/EGL module is X11-only, refusing to load unless
+`QGuiApplication::platformName()` is `xcb`, and it also requires Qt's GL
+integration itself to be EGL-based (`QT_XCB_GL_INTEGRATION=xcb_egl`) - Qt's
+default GLX integration crashes the driver on every frame instead.
 
 **`BUILD-macos.md` is the canonical build, deploy and hardware-decoding
 reference.** Read it before doing any of that work — do not duplicate its
@@ -145,10 +148,12 @@ ffmpeg -re -f lavfi -i "testsrc=size=640x480:rate=15" -c:v libx264 \
   Details in `BUILD-macos.md`.
 - **BGRA needs full colour range**, and the misleading part is that
   `av_hwframe_ctx_init()` succeeds anyway. Details in `BUILD-macos.md`.
-- **Neither of those macOS bugs has a Linux analogue.** The GLX path already
-  requests `GLX_TEXTURE_2D_EXT` and binds `GL_TEXTURE_2D`, so `GLTextureHandle`
-  is correct there — do not "fix" it to `GLTextureRectangleHandle`. The colour
-  range problem was specific to FFmpeg's VideoToolbox format table.
+- **Neither of those macOS bugs has a Linux analogue.** `QmlAVHWOutput_VAAPI_EGL`
+  imports its dma-buf as a plain `GL_TEXTURE_2D`, so `GLTextureHandle` is
+  correct there — do not "fix" it to `GLTextureRectangleHandle`. The colour
+  range problem was specific to FFmpeg's VideoToolbox format table. (Linux has
+  its own hard-won display-path lesson, unrelated to either of these — see
+  `BUILD-linux.md` §5.)
 
 - **Stream quality switching uses two overlapping players, not one player
   changing `source`.** Changing `source` tears down the RTSP connection and
