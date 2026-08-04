@@ -97,6 +97,16 @@ video material only knows how to sample a single already-RGB texture, not
 two-plane YUV - see the class comment in `qmlavhwoutput.h` for the full
 reasoning.
 
+**The VPP output surface is double-buffered, and needs to stay that way.** A
+single reused surface caused real, visible stutter and artifacting against
+actual cameras on a multi-camera wall - never against the synthetic
+single-viewport test stream below, which isn't enough load to expose it. VPP
+and the GPU's render engine are independent, unsynchronized hardware queues,
+so nothing stops VPP overwriting frame N+1 into the same buffer the render
+engine is still reading from to display frame N. `m_rgbSurfaces[2]` alternates
+per frame for exactly this reason - do not collapse it back to one surface as
+a "simplification."
+
 Select it with:
 
 ```
