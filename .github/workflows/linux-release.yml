@@ -59,10 +59,27 @@ jobs:
           # succeeds without them - but linuxdeploy's Qt plugin can only bundle
           # QML modules that exist on the build machine, and a missing one shows
           # up as a blank window at runtime rather than any build error.
+          #
+          # qml-module-qtquick-controls is Controls *1*, which nothing in this
+          # app imports - it is required by QtQuick.Dialogs 1.x internals. That
+          # module picks a backend at runtime: native, then widget-based, then
+          # pure QML. main.cpp builds a QGuiApplication, so the widget backend
+          # is unavailable, and the AppImage bundles no platform theme that
+          # offers native dialogs - so every Dialogs 1.x type falls through to
+          # DefaultMessageDialog.qml / DefaultDialogWrapper.qml, both of which
+          # open with `import QtQuick.Controls 1.2`.
+          #
+          # Nothing drags it in implicitly: qml-module-qtquick-dialogs Depends
+          # on qml-module-qtquick-privatewidgets (which is why the unused widget
+          # backend *did* get bundled) but has no relationship to Controls 1,
+          # and --no-install-recommends would drop a weaker one anyway.
+          # Omitting it shipped a v0.1.12 AppImage that aborted at startup on
+          # every machine with "Type MessageDialog unavailable".
           sudo apt-get install -y --no-install-recommends \
             qml-module-qtquick2 qml-module-qtquick-window2 \
             qml-module-qtquick-controls2 qml-module-qtquick-layouts \
             qml-module-qtquick-templates2 qml-module-qtquick-dialogs \
+            qml-module-qtquick-controls \
             qml-module-qtgraphicaleffects qml-module-qt-labs-settings \
             qml-module-qtmultimedia
 
@@ -123,6 +140,14 @@ jobs:
             --desktop-file AppDir/usr/share/applications/cctv-viewer.desktop \
             --icon-file AppDir/usr/share/pixmaps/cctv-viewer.svg
 
+          # qmlimportscanner silently bundles nothing when a module is absent
+          # from the runner, so assert the two that are reached only through
+          # QtQuick.Dialogs 1.x internals and never named by our own QML. The
+          # smoke test below would also catch this, but several minutes later
+          # and as an opaque startup abort.
+          test -d AppDir/usr/qml/QtQuick/Controls
+          test -d AppDir/usr/qml/QtQuick/Controls/Private
+
       - name: Keep VA-API on the host's drivers
         # libva dispatches to a vendor driver (iHD/i965 for Intel, radeonsi for
         # AMD) loaded from the host. A bundled libva can fail to load the host's
@@ -145,6 +170,47 @@ jobs:
           export VERSION
           ./tools/linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
           ls -la ./CCTV*.AppImage
+
+      - name: Smoke-test the AppImage
+        # Until this existed, a build that could not open a window still shipped
+        # as a release: nothing between "compiles" and "a user runs it" ever
+        # started the binary. v0.1.12 went out that way over a missing QML
+        # module and was dead on arrival everywhere.
+        #
+        # Needs a real X server. The AppImage bundles only the xcb platform
+        # plugin, so QT_QPA_PLATFORM=offscreen does not work - it fails with
+        # "Could not find the Qt platform plugin".
+        run: |
+          sudo apt-get install -y --no-install-recommends xvfb
+
+          # The runner has no GPU. Pin Mesa to llvmpipe so a red run means the
+          # app is broken rather than the driver being absent, and keep VA-API
+          # out of it - hardware decode is the default on xcb, but it only
+          # initialises once a stream plays and no camera is configured here.
+          export LIBGL_ALWAYS_SOFTWARE=1
+
+          # Deliberately not the backgrounded `$!` / `kill -0` shape: $! is
+          # timeout's PID, not the app's, and a timeout that has already exited
+          # can sit unreaped as a zombie that kill -0 still reports as alive -
+          # which passes for a crashed app. timeout's own exit status has no
+          # such ambiguity: 124 means it had to fire, so the app was still up.
+          set +e
+          timeout 20 xvfb-run -a ./CCTV*.AppImage > smoke.log 2>&1
+          rc=$?
+          set -e
+
+          sed 's/^/    /' smoke.log
+
+          if [ "$rc" -ne 124 ]; then
+              echo "::error::AppImage exited on its own (status $rc); it should still have been running after 20s."
+              # QQmlApplicationEngine reports a failed root component and then
+              # main.cpp's objectCreated handler calls exit(-1), which surfaces
+              # as 255. Name that case rather than leaving a bare status code.
+              if grep -q "failed to load component" smoke.log; then
+                  echo "::error::QML failed to load - a module is missing from the bundle, not built."
+              fi
+              exit 1
+          fi
 
       - name: Upload the AppImage as a workflow artifact
         uses: actions/upload-artifact@v4
