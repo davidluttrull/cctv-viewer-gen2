@@ -64,6 +64,29 @@ int main(int argc, char *argv[])
     if (!qEnvironmentVariableIsSet("QT_XCB_GL_INTEGRATION")) {
         qputenv("QT_XCB_GL_INTEGRATION", "xcb_egl");
     }
+
+    // Make the window identify itself as cctv-viewer, so desktop environments
+    // can tie it to the launcher that started it. Without this the taskbar
+    // entry is an unnamed generic window with no icon, because nothing it
+    // reports matches StartupWMClass in cctv-viewer.desktop.
+    //
+    // The two platforms read different things and neither is interchangeable:
+    //
+    // X11 uses WM_CLASS, whose instance name Qt 5's xcb plugin takes from
+    // `-name`, else RESOURCE_NAME, else the basename of argv[0] - and never
+    // from setDesktopFileName(). Under an AppImage argv[0] is linuxdeploy's
+    // AppRun.wrapped shim, so the pair came out "AppRun.wrapped"/"CCTV Viewer"
+    // and matched nothing. Set only when unset, so an explicit `-name` (which
+    // outranks it anyway) or a session-provided value still wins.
+    //
+    // Wayland ignores WM_CLASS entirely and keys off app_id, which is where
+    // setDesktopFileName() does apply. Harmless on X11, so it is set
+    // unconditionally rather than probed for at this point - the platform
+    // plugin has not been chosen yet.
+    if (!qEnvironmentVariableIsSet("RESOURCE_NAME")) {
+        qputenv("RESOURCE_NAME", "cctv-viewer");
+    }
+    QGuiApplication::setDesktopFileName(QStringLiteral("cctv-viewer"));
 #endif
 
 #if defined(APP_NAME)
