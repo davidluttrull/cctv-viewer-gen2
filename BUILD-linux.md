@@ -66,15 +66,27 @@ sudo apt install \
 ```
 
 `qml-module-qtquick-controls` is Qt Quick Controls **1** and is a different
-package from `qml-module-qtquick-controls2` — the app needs both, and the
-name similarity makes this one easy to read past. `RootWindow.qml`'s
-`MessageDialog` comes from `QtQuick.Dialogs` 1.x, whose own
-`DefaultMessageDialog.qml` imports `QtQuick.Controls` 1.2. Debian does not
-encode QML imports as dpkg dependencies, so `qml-module-qtquick-dialogs` does
-not pull Controls 1 in and apt cannot warn that it is missing.
+package from `qml-module-qtquick-controls2` — both are needed, and the name
+similarity makes this one easy to read past. Nothing in this tree imports
+Controls 1; it is reached through `QtQuick.Dialogs` 1.x internals. That module
+resolves a backend at runtime — native, then widget-based, then pure QML.
+`main.cpp` builds a `QGuiApplication`, which rules out the widget backend, and
+nothing here offers native dialogs, so every Dialogs 1.x type falls through to
+the pure-QML implementations — `DefaultMessageDialog.qml` and
+`DefaultDialogWrapper.qml`, both of which open with `import QtQuick.Controls
+1.2`. Three call sites sit on that chain: `RootWindow.qml`'s "Already running!"
+and `SideBar.qml`'s preset-delete `MessageDialog`, and `SettingsDialog.qml`
+through the wrapper.
+
+Nothing drags it in implicitly. `qml-module-qtquick-dialogs` depends on
+`qml-module-qtquick-privatewidgets` — which is why the never-used widget
+backend shows up anyway — but declares no relationship to Controls 1, and
+Debian does not encode QML imports as dpkg dependencies, so apt cannot warn
+that it is missing.
 
 This one is also the exception to the blank-window rule above — it is not a
-silent failure. The engine gives up and the process exits immediately:
+silent failure. `RootWindow`'s dialog is a root-level child, so the engine
+fails before a window ever appears and the process exits:
 
 ```
 qrc:/src/RootWindow.qml:336:5: Type MessageDialog unavailable
@@ -82,10 +94,12 @@ qrc:/src/RootWindow.qml:336:5: Type MessageDialog unavailable
 ```
 
 Confirmed on a clean Mint 22.3 / Ubuntu 24.04 install, building from source.
-Whether the AppImage carries Controls 1 is untested — linuxdeploy discovers QML
-modules by scanning `QML_SOURCES_PATHS` (section 6), and this import is a
-transitive one reached from inside Qt's own `QtQuick.Dialogs`, not from any
-file in this tree. Worth checking whenever the AppImage does get launched.
+**The AppImage already had this fixed** — 9a00c50 installs Controls 1 on the
+runner, asserts `QtQuick/Controls` and `QtQuick/Controls/Private` actually
+landed in the AppDir (`qmlimportscanner` bundles nothing and says nothing when
+a module is absent from the runner), and added the smoke test in section 6,
+after the v0.1.12 AppImage shipped dead on arrival for exactly this reason.
+That fix never reached this document, so the from-source path kept the bug.
 
 `CMakeLists.txt` requires the `QuickCompiler` component, which is Qt 5 only.
 `Qt5QuickCompiler` **is** packaged on 22.04 (in `qtdeclarative5-dev`) — worth
@@ -317,8 +331,18 @@ The workflow pins `ubuntu-22.04` deliberately. An AppImage built against a newer
 glibc will not start on an older distribution, so building on 22.04 covers Mint
 21 and still runs on Mint 22. Bumping it drops Mint 21 support.
 
-**The AppImage has never been launched.** CI proves it builds and packages, not
-that it runs.
+**CI launches the AppImage before shipping it** (9a00c50). A 20-second run
+under Xvfb has to still be alive when the timeout fires — `timeout`'s exit
+status of 124 is the pass condition, since an app that exited on its own is
+exactly the failure being looked for — and a `failed to load component` in its
+log is reported as a missing bundled module rather than a bare status code.
+`LIBGL_ALWAYS_SOFTWARE=1` pins Mesa to llvmpipe so a red run means the app is
+broken rather than the runner having no GPU.
+
+What that does *not* cover: it runs with no camera configured and no GPU, so
+hardware decoding never initialises, and the AppImage has still never been run
+on a real desktop. Builds-and-starts is now proven; the VA-API path in section
+5 is not proven from the AppImage.
 
 ## Gotchas
 
