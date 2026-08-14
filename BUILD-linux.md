@@ -9,6 +9,14 @@ default** on `xcb` (X11) - see section 5.
 
 ## 1. Clone with submodules
 
+`git` is not guaranteed to be present. It is not part of a minimal Mint
+install, and section 2's package list — which is where it now appears — runs
+one step too late to clone with. Install it first if `git --version` fails:
+
+```sh
+sudo apt install git
+```
+
 ```sh
 git clone --recurse-submodules https://github.com/davidluttrull/cctv-viewer-stretch.git
 cd cctv-viewer-stretch
@@ -20,7 +28,8 @@ the build fails without it; if you cloned without `--recurse-submodules`, run
 
 ## 2. Dependencies
 
-This exact set is what CI verified. Two of these are easy to miss because
+This is the set CI verified, plus `git` — which CI's runner image already has
+and a fresh Mint install may not. Two of these are easy to miss because
 Debian's package names do not match CMake's component names, and both cost a
 failed run:
 
@@ -31,7 +40,7 @@ failed run:
 
 ```sh
 sudo apt install \
-  cmake pkg-config \
+  git cmake pkg-config \
   qtbase5-dev qtdeclarative5-dev qtquickcontrols2-5-dev \
   qtmultimedia5-dev qttools5-dev qttools5-dev-tools libqt5svg5-dev \
   libavcodec-dev libavformat-dev libavutil-dev \
@@ -49,11 +58,34 @@ at runtime with no build error:
 ```sh
 sudo apt install \
   qml-module-qtquick2 qml-module-qtquick-window2 \
-  qml-module-qtquick-controls2 qml-module-qtquick-layouts \
+  qml-module-qtquick-controls qml-module-qtquick-controls2 \
+  qml-module-qtquick-layouts \
   qml-module-qtquick-templates2 qml-module-qtquick-dialogs \
   qml-module-qtgraphicaleffects qml-module-qt-labs-settings \
   qml-module-qtmultimedia
 ```
+
+`qml-module-qtquick-controls` is Qt Quick Controls **1** and is a different
+package from `qml-module-qtquick-controls2` — the app needs both, and the
+name similarity makes this one easy to read past. `RootWindow.qml`'s
+`MessageDialog` comes from `QtQuick.Dialogs` 1.x, whose own
+`DefaultMessageDialog.qml` imports `QtQuick.Controls` 1.2. Debian does not
+encode QML imports as dpkg dependencies, so `qml-module-qtquick-dialogs` does
+not pull Controls 1 in and apt cannot warn that it is missing.
+
+This one is also the exception to the blank-window rule above — it is not a
+silent failure. The engine gives up and the process exits immediately:
+
+```
+qrc:/src/RootWindow.qml:336:5: Type MessageDialog unavailable
+.../QtQuick/Dialogs/DefaultMessageDialog.qml:41:1: module "QtQuick.Controls" version 1.2 is not installed
+```
+
+Confirmed on a clean Mint 22.3 / Ubuntu 24.04 install, building from source.
+Whether the AppImage carries Controls 1 is untested — linuxdeploy discovers QML
+modules by scanning `QML_SOURCES_PATHS` (section 6), and this import is a
+transitive one reached from inside Qt's own `QtQuick.Dialogs`, not from any
+file in this tree. Worth checking whenever the AppImage does get launched.
 
 `CMakeLists.txt` requires the `QuickCompiler` component, which is Qt 5 only.
 `Qt5QuickCompiler` **is** packaged on 22.04 (in `qtdeclarative5-dev`) — worth
