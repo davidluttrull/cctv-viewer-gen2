@@ -24,6 +24,15 @@ reference.** Read it before doing any of that work — do not duplicate its
 content here. This file covers only what an agent needs that a build guide
 would not say.
 
+**`BUILD-ios.md` covers the iPad spike**, which is groundwork and one
+measurement tool, not a port. Read it before touching anything under `ios/`.
+Two things it will save you: the iOS Simulator has no VideoToolbox hardware
+decode at all, so a clean simulator run proves the plumbing and nothing about
+the hardware; and `ios/probe/` is throwaway, to be deleted once it has answered
+how many concurrent decode sessions iPadOS grants. The spike is deliberately
+standalone — the top-level `CMakeLists.txt` knows nothing about `ios/`, so none
+of it can affect the Linux, macOS or Android builds.
+
 ## Build and run, in brief
 
 ```sh
