@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>@PROBE_EXECUTABLE@</string>
+	<key>CFBundleIdentifier</key>
+	<string>@PROBE_BUNDLE_ID@</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>CCTV Probe</string>
+	<key>CFBundleDisplayName</key>
+	<string>CCTV Probe</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>@PROBE_PLATFORM@</string>
+	</array>
+	<key>MinimumOSVersion</key>
+	<string>@PROBE_MIN_OS@</string>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	<!-- An app built against a current SDK with no launch screen key is
+	     letterboxed into a phone-sized window on iPad, which would make the
+	     readout unreadable. An empty dict is the "just use the window" answer. -->
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<!-- Required, and easy to overlook until it bites on the device: iOS 14
+	     and later put unicast connections to LAN addresses behind the local
+	     network privacy prompt. The cameras are on a private LAN subnet, so
+	     without this key and a tap on Allow, every RTSP connection fails with
+	     what looks like a network error. The simulator does not enforce it,
+	     so a clean simulator run proves nothing about this. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>CCTV Probe connects to the cameras on your local network to measure how many video streams this device can decode at once.</string>
+</dict>
+</plist>
