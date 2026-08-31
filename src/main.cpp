@@ -119,7 +119,12 @@ int main(int argc, char *argv[])
     const QString locale = QLocale::system().name();
     translator.load(QLatin1String("cctv-viewer_") + locale, QLatin1String(":/translations/"));
     app.installTranslator(&translator);
+    // The Dock, Finder and Cmd-Tab icon comes from the bundle's .icns on macOS
+    // (CMakeLists.txt). setWindowIcon() would override it at runtime with
+    // upstream's artwork, so the icon changed the moment the app launched.
+#if !defined(Q_OS_MACOS)
     app.setWindowIcon(QIcon(QLatin1String(":/images/cctv-viewer.svg")));
+#endif
 
     Context::init();
 
