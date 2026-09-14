@@ -1,0 +1,9 @@
+[Unit]
+Description=Check for and install CCTV Viewer updates
+# Nothing to update to if the network is not up yet; the script also fails
+# safe on its own, leaving the wall running.
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/Apps/cctv-viewer-update.sh

@@ -35,6 +35,42 @@ GPU (`intel-media-va-driver-non-free` on recent Intel, `mesa-va-drivers` on AMD)
 if `vainfo` reports no profiles. The app still runs without it, decoding on the
 CPU.
 
+### Updating an AppImage
+
+From v0.1.14 the AppImage updates itself. With
+[appimageupdatetool](https://github.com/AppImageCommunity/AppImageUpdate):
+
+	appimageupdatetool -O CCTV_Viewer-*-x86_64.AppImage
+
+Only changed blocks are fetched - a few MB rather than the whole image. `-O`
+replaces the file in place; without it a new versioned file is written beside
+the old one and every launcher still points at the old one.
+
+Quit the app first, and note it is not named `cctv-viewer`: the kernel truncates
+the process name to `cctv-viewer.App`, and there is an `AppRun.wrapped` child
+beside it. Killing one and not the other leaves the survivor holding the lock
+file in `/tmp`, so the next start aborts with "The application is already
+running!" over a blank screen.
+
+	pkill -f '[c]ctv-viewer\.AppImage|[.]mount_cctv'
+
+### Running it as a kiosk
+
+For an unattended wall, run it under systemd rather than an autostart entry, and
+let the unit's control-group kill take the whole process tree - that is what
+makes an automated update safe. Ready-made units are in
+[deploy/linux-kiosk](deploy/linux-kiosk):
+
+	cp deploy/linux-kiosk/*.service deploy/linux-kiosk/*.timer ~/.config/systemd/user/
+	cp deploy/linux-kiosk/cctv-viewer-update.sh ~/Apps/
+	systemctl --user daemon-reload
+	systemctl --user enable --now cctv-viewer.service cctv-viewer-update.timer
+
+The timer checks nightly and stops the wall only when there is something to
+install, rolling back to the previous AppImage if the update fails. Disable any
+XDG autostart entry for the app first, or you get two instances and the lock
+file collision above.
+
 Building from source, hardware decoding and packaging are covered in
 [BUILD-linux.md](BUILD-linux.md).
 

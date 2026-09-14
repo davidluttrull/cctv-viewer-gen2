@@ -1,0 +1,25 @@
+[Unit]
+Description=CCTV Wall (kiosk)
+# graphical-session.target is inactive under this session manager, so the
+# display is named explicitly below rather than inherited from it.
+After=graphical-session.target
+
+[Service]
+Type=simple
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=%h/.Xauthority
+ExecStart=%h/Apps/cctv-viewer.AppImage -f -k
+
+# The AppImage runtime forks an AppRun.wrapped child. Killing only the parent
+# leaves that child alive still holding the QLockFile in /tmp, and the next
+# start then aborts with "The application is already running!" onto a blank
+# screen. systemd's default control-group kill takes the whole tree, which is
+# the reason this unit exists rather than a pkill in a script.
+KillMode=control-group
+TimeoutStopSec=20
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
