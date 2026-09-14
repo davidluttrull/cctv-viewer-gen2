@@ -10,12 +10,38 @@ Based on ffmpeg.
 
 To clone this repository be sure to use the following command:
 
-	git clone --recurse-submodules https://github.com/iEvgeny/cctv-viewer.git
+	git clone --recurse-submodules https://github.com/davidluttrull/cctv-viewer-gen2.git
+
+## Install on Linux
+
+Download the latest `.AppImage` from
+[Releases](https://github.com/davidluttrull/cctv-viewer-gen2/releases), make it
+executable and run it. x86_64, built against Ubuntu 22.04 so it also runs on
+newer distributions:
+
+	chmod +x CCTV_Viewer-*-x86_64.AppImage
+	./CCTV_Viewer-*-x86_64.AppImage
+
+The AppImage needs FUSE 2 to mount itself. Debian and Ubuntu derivatives ship it
+as `libfuse2` (`libfuse2t64` on Ubuntu 24.04 and Linux Mint 22); without it the
+app exits complaining it "cannot mount AppImage". To run without installing
+anything, extract it instead:
+
+	./CCTV_Viewer-*-x86_64.AppImage --appimage-extract-and-run
+
+Hardware decoding uses VA-API and is on by default. The AppImage deliberately
+does not bundle libva, so it uses the host's driver - install the one for your
+GPU (`intel-media-va-driver-non-free` on recent Intel, `mesa-va-drivers` on AMD)
+if `vainfo` reports no profiles. The app still runs without it, decoding on the
+CPU.
+
+Building from source, hardware decoding and packaging are covered in
+[BUILD-linux.md](BUILD-linux.md).
 
 ## Install on macOS
 
 Download the latest `.dmg` from
-[Releases](https://github.com/davidluttrull/cctv-viewer-stretch/releases), open
+[Releases](https://github.com/davidluttrull/cctv-viewer-gen2/releases), open
 it, and drag **cctv-viewer** onto Applications. Apple silicon (M1 and later).
 
 These builds are signed ad-hoc rather than with an Apple Developer ID, so macOS
