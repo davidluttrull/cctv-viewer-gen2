@@ -160,6 +160,21 @@ jobs:
                  AppDir/usr/lib/libva-drm.so* || true
 
       - name: Build the AppImage
+        env:
+          # Embeds a self-update pointer in the AppImage and writes a .zsync
+          # file beside it. appimageupdatetool reads the pointer, fetches the
+          # .zsync from the latest release and transfers only the blocks that
+          # changed - a few MB rather than the ~96MB image.
+          #
+          # "latest" is resolved by AppImageUpdate at update time, so this
+          # string is correct in every build and needs no per-release edit. The
+          # glob must match the release asset name, which carries the version.
+          #
+          # Set unconditionally rather than only on tags: an untagged build
+          # produces an unversioned filename the glob still matches, and
+          # keeping one code path means the tag build is not the first time
+          # this is exercised.
+          LDAI_UPDATE_INFORMATION: "gh-releases-zsync|davidluttrull|cctv-viewer-gen2|latest|CCTV_Viewer-*-x86_64.AppImage.zsync"
         run: |
           VERSION=""
           case "$GITHUB_REF" in
@@ -170,6 +185,12 @@ jobs:
           export VERSION
           ./tools/linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
           ls -la ./CCTV*.AppImage
+
+          # The .zsync is what makes the update pointer resolvable; without it
+          # on the release, every client falls back to a full download or fails
+          # outright. Assert it rather than discovering that after shipping.
+          test -f ./CCTV*.AppImage.zsync
+          ls -la ./CCTV*.AppImage.zsync
 
       - name: Smoke-test the AppImage
         # Until this existed, a build that could not open a window still shipped
@@ -216,7 +237,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cctv-viewer-appimage
-          path: ./CCTV*.AppImage
+          path: |
+            ./CCTV*.AppImage
+            ./CCTV*.AppImage.zsync
           if-no-files-found: error
 
       - name: Attach the AppImage to the release
@@ -227,8 +250,10 @@ jobs:
         # the release, so upload to an existing one when it is already there.
         run: |
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-              gh release upload "$GITHUB_REF_NAME" ./CCTV*.AppImage --clobber
+              gh release upload "$GITHUB_REF_NAME" \
+                  ./CCTV*.AppImage ./CCTV*.AppImage.zsync --clobber
           else
-              gh release create "$GITHUB_REF_NAME" ./CCTV*.AppImage \
+              gh release create "$GITHUB_REF_NAME" \
+                  ./CCTV*.AppImage ./CCTV*.AppImage.zsync \
                 --title "CCTV Viewer $GITHUB_REF_NAME"
           fi
