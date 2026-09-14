@@ -69,6 +69,15 @@ jobs:
           # DefaultMessageDialog.qml / DefaultDialogWrapper.qml, both of which
           # open with `import QtQuick.Controls 1.2`.
           #
+          # libqt5multimedia5-plugins is the same trap in the audio path: it
+          # provides plugins/audio (libqtaudio_alsa, libqtmedia_pulse) and
+          # plugins/mediaservice. linuxdeploy's Qt plugin bundles both groups
+          # when they exist on the runner and silently bundles nothing when
+          # they do not - qtmultimedia5-dev supplies headers, not these. Built
+          # without it, every AppImage logs "using null output device, none
+          # available" per stream and plays no audio, while video is unaffected
+          # so nothing looks broken.
+          #
           # Nothing drags it in implicitly: qml-module-qtquick-dialogs Depends
           # on qml-module-qtquick-privatewidgets (which is why the unused widget
           # backend *did* get bundled) but has no relationship to Controls 1,
@@ -81,7 +90,8 @@ jobs:
             qml-module-qtquick-templates2 qml-module-qtquick-dialogs \
             qml-module-qtquick-controls \
             qml-module-qtgraphicaleffects qml-module-qt-labs-settings \
-            qml-module-qtmultimedia
+            qml-module-qtmultimedia \
+            libqt5multimedia5-plugins
 
       - name: List the Qt modules apt actually provided
         # CMakeLists requires Core, Quick, Multimedia, QuickCompiler and
@@ -147,6 +157,12 @@ jobs:
           # and as an opaque startup abort.
           test -d AppDir/usr/qml/QtQuick/Controls
           test -d AppDir/usr/qml/QtQuick/Controls/Private
+
+          # Same assertion for the audio path, which fails just as quietly:
+          # without these the app starts and shows video, so only the absence
+          # of sound reveals it.
+          test -d AppDir/usr/plugins/audio
+          test -d AppDir/usr/plugins/mediaservice
 
       - name: Keep VA-API on the host's drivers
         # libva dispatches to a vendor driver (iHD/i965 for Intel, radeonsi for
