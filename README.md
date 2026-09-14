@@ -40,53 +40,38 @@ Building from source, hardware decoding and packaging are covered in
 
 ## Updating a manual installation
 
-A source build runs straight out of the build directory - nothing is copied into
-`/usr`, so there is no package to upgrade and no installer to re-run. Updating
-means rebuilding the clone your launcher already points at.
+A source build runs from its build directory, so there is nothing to
+re-install - updating means rebuilding the clone your launcher points at.
+Deployed clones sit at `~/cctv-viewer-stretch`; the repository has since been
+renamed to `cctv-viewer-gen2`, but GitHub redirects the old URL, so an existing
+`origin` still pulls.
 
-Stop the running copy first. The app is single-instance, and the binary you are
-about to overwrite is the one executing:
+Stop the running copy first - the app is single-instance, and you are about to
+overwrite the binary that is executing:
 
 	pkill -x cctv-viewer
 
-Update the source. `git pull` alone is not enough - it does not move submodules,
-so `src/qmlav` stays at the old commit and you rebuild the new application
-against the old media backend, with no error to tell you so:
+Update and rebuild:
 
-	cd /path/to/cctv-viewer-gen2
+	cd ~/cctv-viewer-stretch
 	git pull
 	git submodule update --init src/qmlav
-
-Rebuild and restart:
-
 	cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 	cmake --build build -j"$(nproc)"
-	./build/cctv-viewer
 
-Settings survive all of this untouched. They live in
-`~/.config/CCTV Viewer/CCTV Viewer.conf`, outside the source tree, and carry
-presets, viewport layouts, kiosk flags and window state across rebuilds. It is a
-small text file - copy it somewhere before a big jump if you want a way back.
+Then restart it the way your launcher does - for a kiosk,
+`./build/cctv-viewer -f -k`. Check what you got with
+`./build/cctv-viewer --version`.
 
-Three things that catch people out:
+The submodule step is not optional. `git pull` leaves `src/qmlav` at the old
+commit, and the result builds and runs without complaint against the old media
+backend.
 
-**Launcher entries hardcode absolute paths.** A hand-written `.desktop` file
-names the binary in full (`Exec=/home/you/cctv-viewer-gen2/build/cctv-viewer`),
-and usually the icon too. Renaming or moving the clone breaks every one of them
-silently - the menu entry simply stops doing anything. Check
-`~/.local/share/applications` and `~/.config/autostart` for entries to repoint.
+Settings are untouched: they live in `~/.config/CCTV Viewer/CCTV Viewer.conf`,
+outside the source tree.
 
-**A moved or renamed clone needs its build directory deleted.** CMake records
-absolute paths in `build/CMakeCache.txt`, so a build tree that no longer sits
-where it was configured fails with errors naming the old location. Remove
-`build` and configure again; nothing in it is worth keeping.
-
-**Dependencies change between versions.** A newly required Qt or QML module
-surfaces either as a `find_package` failure at configure time or as a blank
-window at runtime - QML modules are resolved when the app starts, not when it
-compiles, so a missing one is not a build error. Re-check the dependency list in
-[BUILD-linux.md](BUILD-linux.md) instead of assuming last time's packages still
-cover it.
+If a release adds a Qt or QML module, configure fails or the window comes up
+blank - re-check the dependencies in [BUILD-linux.md](BUILD-linux.md).
 
 ## Install on macOS
 
